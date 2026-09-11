@@ -1,0 +1,13 @@
+# 클라이언트(차량 Pi / 서버 Pi4 / 폰) 공통 형태 — /etc/wireguard/wg0.conf
+# ⚠️ 실제 키는 절대 커밋하지 말 것.
+[Interface]
+PrivateKey = <THIS_DEVICE_PRIVATE_KEY>
+Address    = 10.10.0.3/24        # 차량 .3 / 서버 .9 / 폰 .11
+# DNS = 1.1.1.1, 8.8.8.8         # 폰 풀터널(AllowedIPs=0.0.0.0/0)일 때만 필수
+
+[Peer]
+PublicKey    = <OCI_SERVER_PUBLIC_KEY>
+PresharedKey = <SHARED_PSK>
+Endpoint     = <OCI_PUBLIC_IP>:51820
+AllowedIPs   = 10.10.0.0/24      # VPN 대역만. 0.0.0.0/0 은 LTE/핫스팟 라우팅이 꼬인다
+PersistentKeepalive = 25         # ⭐ CGNAT 뒤 기기 필수 (없으면 몇 분 뒤 외부→Pi 접속 불가)

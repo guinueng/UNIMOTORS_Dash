@@ -1,0 +1,12 @@
+[Unit]
+Description=Auto LTE Connection for SIM7600 (UNIMOTORS)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/unimotors/lte_auto.sh
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target

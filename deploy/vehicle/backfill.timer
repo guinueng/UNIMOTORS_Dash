@@ -1,0 +1,10 @@
+[Unit]
+Description=Run UNIMOTORS backfill periodically
+
+[Timer]
+OnBootSec=3min          # 부팅 3분 후 (VPN/LTE 안정화 대기)
+OnUnitActiveSec=15min   # 이후 15분마다
+Persistent=true         # 놓친 실행은 다음 부팅에 만회
+
+[Install]
+WantedBy=timers.target

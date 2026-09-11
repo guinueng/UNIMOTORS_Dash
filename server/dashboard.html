@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UNIMOTORS · Telemetry</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     />
+<style>
+  :root{
+    --bg:#0d0f12; --panel:#141820; --panel2:#1a1f29; --line:#232936;
+    --cyan:#4de0d4; --amber:#ffb043; --red:#ff4d4d; --green:#3ddc84;
+    --txt:#e6ebf2; --dim:#6b7688; --dimmer:#3f4756;
+    --mono:"SFMono-Regular",ui-monospace,"Roboto Mono",Menlo,monospace;
+    --sans:-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:var(--bg);color:var(--txt);font-family:var(--sans);overflow:hidden}
+  body{display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:16px;padding:10px 18px;background:var(--panel);
+    border-bottom:1px solid var(--line);flex:none;z-index:600}
+  .brand{font-weight:700;letter-spacing:.22em;font-size:15px}
+  .brand b{color:var(--cyan)}
+  .tabs{display:flex;gap:2px;margin-left:8px}
+  .tab{padding:6px 16px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--dim);background:transparent;border:0;cursor:pointer;border-radius:4px}
+  .tab.active{color:var(--bg);background:var(--cyan);font-weight:600}
+  /* 실시간 차량 선택 (2대+일 때만) */
+  #vehSel{display:none;margin-left:6px;padding:5px 10px;background:var(--panel2);
+    color:var(--txt);border:1px solid var(--line);border-radius:6px;font-size:12px;
+    font-family:var(--sans);cursor:pointer}
+  #vehSel.show{display:inline-block}
+  .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--dimmer)}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .dot.off{background:var(--red);box-shadow:0 0 8px var(--red)}
+  main{flex:1;position:relative;overflow:hidden}
+  .view{position:absolute;inset:0;display:none}
+  .view.active{display:flex}
+  #map,#amap{position:absolute;inset:0;background:#0a0c10}
+  .leaflet-container{background:#0a0c10}
+  .rail{position:absolute;top:0;bottom:0;width:300px;background:rgba(20,24,32,.92);
+    backdrop-filter:blur(8px);border-right:1px solid var(--line);z-index:500;
+    display:flex;flex-direction:column;padding:14px;gap:12px;overflow-y:auto}
+  .rail.right{right:0;left:auto;border-right:0;border-left:1px solid var(--line)}
+  .speedblk{text-align:center;padding:8px 0 4px}
+  .speedblk .val{font-family:var(--mono);font-size:82px;font-weight:700;line-height:.9;
+    color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+  .speedblk .unit{font-size:11px;letter-spacing:.3em;color:var(--dim);margin-top:2px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .metric{background:var(--panel);padding:9px 11px}
+  .metric .k{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .metric .v{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums;margin-top:2px}
+  .metric .v small{font-size:11px;color:var(--dim)}
+  .metric.wide{grid-column:1/3}
+  .v.cyan{color:var(--cyan)} .v.amber{color:var(--amber)} .v.red{color:var(--red)} .v.green{color:var(--green)}
+  .sect{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dimmer);
+    padding:2px 2px 0;display:flex;align-items:center;gap:8px}
+  .sect::after{content:"";flex:1;height:1px;background:var(--line)}
+  .ggwrap{display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px 0}
+  .gg{position:relative;width:150px;height:150px;border-radius:50%;
+    border:1px solid var(--line);background:
+      repeating-radial-gradient(circle,transparent 0 36px,var(--panel2) 36px 37px),
+      radial-gradient(circle,#12161e,#0d0f12)}
+  .gg i{position:absolute;background:var(--line)}
+  .gg .h{left:6px;right:6px;top:50%;height:1px}
+  .gg .v{top:6px;bottom:6px;left:50%;width:1px}
+  .gg .dot{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--cyan);
+    left:50%;top:50%;transform:translate(-50%,-50%);
+    box-shadow:0 0 12px var(--cyan);transition:left .12s linear,top .12s linear}
+  .gg .lbl{position:absolute;font-size:8px;color:var(--dimmer);letter-spacing:.1em}
+  .gg .lbl.t{top:4px;left:50%;transform:translateX(-50%)}
+  .gg .lbl.b{bottom:4px;left:50%;transform:translateX(-50%)}
+  .gg .lbl.l{left:5px;top:50%;transform:translateY(-50%)}
+  .gg .lbl.r{right:5px;top:50%;transform:translateY(-50%)}
+  .gmag{font-family:var(--mono);font-size:13px;color:var(--dim)}
+  .gmag b{color:var(--txt)}
+  #alarm{padding:9px 12px;border-radius:6px;font-size:12px;letter-spacing:.06em;font-weight:600;display:none}
+  #alarm.warn{display:block;background:rgba(255,176,67,.14);color:var(--amber);border:1px solid rgba(255,176,67,.3)}
+  #alarm.crit{display:block;background:rgba(255,77,77,.16);color:var(--red);
+    border:1px solid rgba(255,77,77,.4);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.55}}
+  .foot{margin-top:auto;font-size:10px;color:var(--dimmer);letter-spacing:.08em;
+    font-family:var(--mono);text-align:center}
+  #offline{position:absolute;inset:0;z-index:1000;background:rgba(8,10,13,.95);
+    display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+  #offline.show{display:flex}
+  #offline .big{font-size:26px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  #offline .sub{font-size:13px;color:var(--dimmer);letter-spacing:.1em;font-family:var(--mono)}
+  #offline .rec{width:11px;height:11px;border-radius:50%;background:var(--red);animation:pulse 1.2s infinite}
+  /* 분석 */
+  .arail{position:absolute;top:0;bottom:0;left:0;width:290px;background:rgba(20,24,32,.94);
+    border-right:1px solid var(--line);z-index:500;padding:14px;display:flex;
+    flex-direction:column;gap:10px;overflow-y:auto}
+  select,button.act{width:100%;padding:9px 11px;background:var(--panel2);color:var(--txt);
+    border:1px solid var(--line);border-radius:6px;font-size:13px;font-family:var(--sans);cursor:pointer}
+  button.act{background:var(--cyan);color:var(--bg);font-weight:600;border:0;letter-spacing:.08em}
+  .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px}
+  .chartbox h4{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);
+    margin-bottom:6px;font-weight:500}
+  canvas.chart{width:100%;height:80px;display:block;cursor:crosshair}
+  .ro{font-family:var(--mono);font-size:10.5px;color:var(--dim);
+    padding:4px 2px 0;min-height:15px;letter-spacing:.02em}
+  .ro b{color:var(--txt)}
+  .zoomhint{display:flex;align-items:center;gap:8px;font-family:var(--mono);
+    font-size:10px;color:var(--dimmer);letter-spacing:.04em}
+  .zoomhint button{background:var(--panel2);color:var(--dim);border:1px solid var(--line);
+    border-radius:4px;font-size:10px;padding:3px 8px;cursor:pointer;font-family:var(--mono)}
+  .zoomhint button:hover{color:var(--txt);border-color:var(--cyan)}
+  .astat{font-size:11px;color:var(--dim);font-family:var(--mono);line-height:1.75}
+  .astat b{color:var(--txt);font-size:13px}
+  .cumgrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .cumgrid .metric .v{font-size:18px}
+  /* 랩 테이블 */
+  .laptbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+  .laptbl th{color:var(--dimmer);font-weight:500;text-align:right;padding:3px 4px;
+    border-bottom:1px solid var(--line);font-size:9.5px;letter-spacing:.06em}
+  .laptbl th:first-child,.laptbl td:first-child{text-align:left}
+  .laptbl td{text-align:right;padding:4px;border-bottom:1px solid #1a1f28;color:var(--dim)}
+  .laptbl tr{cursor:pointer}
+  .laptbl tr:hover td{background:#1a2029;color:var(--txt)}
+  .laptbl tr.sel td{background:rgba(77,224,212,.12);color:var(--txt)}
+  .laptbl tr.best td{color:var(--cyan)}
+  .laptbl tr.best td:first-child::after{content:" ★"}
+  .laptbl tr.dirty td{color:var(--dimmer);font-style:italic}
+  .miniin{width:52px;background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+    border-radius:4px;padding:2px 5px;font-family:var(--mono);font-size:11px}
+  .btn2{padding:6px 10px;background:var(--panel2);color:var(--dim);border:1px solid var(--line);
+    border-radius:5px;font-size:11px;font-family:var(--mono);cursor:pointer}
+  .btn2:hover{color:var(--txt);border-color:var(--cyan)}
+  .btn2.on{background:var(--cyan);color:var(--bg);border-color:var(--cyan);font-weight:600}
+  /* 삭제 위험구역 */
+  .danger{border:1px solid rgba(255,77,77,.35);border-radius:8px;padding:12px;
+    background:rgba(255,77,77,.05)}
+  .danger h5{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--red);
+    margin-bottom:8px;font-weight:600}
+  .danger .warn{font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:8px}
+  .dbtn{width:100%;padding:8px;background:transparent;color:var(--red);
+    border:1px solid rgba(255,77,77,.4);border-radius:5px;font-size:11.5px;
+    font-family:var(--mono);cursor:pointer;margin-top:5px}
+  .dbtn:hover{background:rgba(255,77,77,.14)}
+  .dbtn.go{background:var(--red);color:#fff;border-color:var(--red);font-weight:600}
+  .dbtn:disabled{opacity:.4;cursor:not-allowed}
+  .dbtn:disabled:hover{background:transparent}
+  @media(max-width:820px){
+    .rail{width:150px;padding:8px;gap:8px}.speedblk .val{font-size:52px}
+    .metric .v{font-size:17px}.gg{width:110px;height:110px}.arail{width:210px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>UNIMOTORS</b> TELEMETRY</div>
+  <div class="tabs">
+    <button class="tab active" data-view="live">실시간</button>
+    <button class="tab" data-view="analysis">주행 분석</button>
+  </div>
+  <select id="vehSel" title="차량 선택"></select>
+  <div class="status"><span class="dot" id="statusDot"></span><span id="statusTxt">연결 중</span></div>
+</header>
+
+<main>
+  <section class="view active" id="live">
+    <div id="map"></div>
+    <div id="offline"><div class="rec"></div>
+      <div class="big">차량 신호 없음</div>
+      <div class="sub" id="offlineSince">수신 대기 중</div>
+    </div>
+    <aside class="rail">
+      <div class="speedblk"><div class="val" id="d-speed">--</div><div class="unit">KM / H</div></div>
+      <div class="grid">
+        <div class="metric"><div class="k">Heading</div><div class="v" id="d-head">--<small>°</small></div></div>
+        <div class="metric"><div class="k">Sats</div><div class="v" id="d-sats">--</div></div>
+        <div class="metric"><div class="k">Alt</div><div class="v" id="d-alt">--<small>m</small></div></div>
+        <div class="metric"><div class="k">HDOP</div><div class="v" id="d-hdop">--</div></div>
+      </div>
+      <div class="sect">G-Force</div>
+      <div class="ggwrap">
+        <div class="gg"><i class="h"></i><i class="v"></i>
+          <span class="lbl t">ACC</span><span class="lbl b">BRK</span>
+          <span class="lbl l">L</span><span class="lbl r">R</span>
+          <div class="dot" id="d-gdot"></div>
+        </div>
+        <div class="gmag">G <b id="d-gmag">0.00</b> · lon <span id="d-glon">0.00</span> lat <span id="d-glat">0.00</span></div>
+      </div>
+    </aside>
+    <aside class="rail right">
+      <div class="sect">Battery</div>
+      <div class="grid">
+        <div class="metric"><div class="k">SOC</div><div class="v cyan" id="d-soc">--<small>%</small></div></div>
+        <div class="metric"><div class="k">Pack</div><div class="v" id="d-volt">--<small>V</small></div></div>
+        <div class="metric"><div class="k">Current</div><div class="v" id="d-cur">--<small>A</small></div></div>
+        <div class="metric"><div class="k">Power</div><div class="v" id="d-pwr">--<small>W</small></div></div>
+        <div class="metric"><div class="k">Remain</div><div class="v" id="d-remain">--<small>Ah</small></div></div>
+        <div class="metric"><div class="k">Range</div><div class="v" id="d-range">--<small>km</small></div></div>
+      </div>
+      <div class="sect">Thermal / Cells</div>
+      <div class="grid">
+        <div class="metric"><div class="k">Temp Max</div><div class="v" id="d-tmax">--<small>°C</small></div></div>
+        <div class="metric"><div class="k">Temp Min</div><div class="v" id="d-tmin">--<small>°C</small></div></div>
+        <div class="metric wide"><div class="k">Cell V (min~max / Δ)</div><div class="v" id="d-cells" style="font-size:16px">--</div></div>
+      </div>
+      <div id="alarm"></div>
+      <div class="foot" id="d-clock">--:--:--</div>
+    </aside>
+  </section>
+
+  <section class="view" id="analysis">
+    <div id="amap"></div>
+    <aside class="arail">
+      <div class="sect">차량</div>
+      <select id="aVeh"><option>불러오는 중…</option></select>
+      <div class="sect">주행 선택</div>
+      <select id="aSess"><option>차량을 먼저 선택</option></select>
+      <div style="display:flex;gap:5px;margin-top:6px" id="modeBox">
+        <button class="btn2 on" id="mDrive" style="flex:1">주행 분석</button>
+        <button class="btn2" id="mBatt" style="flex:1">배터리 분석</button>
+      </div>
+      <button class="act" id="loadBtn">불러오기</button>
+
+      <!-- 궤적 색 기준 -->
+      <div id="colorBox" style="display:none">
+        <div class="sect">궤적 색</div>
+        <select id="colorBy">
+          <option value="speed">속도</option>
+          <option value="alt">고도</option>
+          <option value="soc">배터리 SOC</option>
+          <option value="used_ah">배터리 사용량</option>
+          <option value="none">단색</option>
+        </select>
+        <div id="legend" style="display:flex;align-items:center;gap:6px;margin-top:6px;
+          font-family:var(--mono);font-size:10px;color:var(--dim)">
+          <span id="lgMin">--</span>
+          <span style="flex:1;height:8px;border-radius:4px;background:linear-gradient(
+            90deg,#3b6ea5,#4de0d4,#8ede4a,#ffb043,#ff4d4d)"></span>
+          <span id="lgMax">--</span>
+        </div>
+      </div>
+
+      <!-- 스크러버: 세션 재생 슬라이더 -->
+      <div id="scrubBox" style="display:none">
+        <div class="sect">재생</div>
+        <input type="range" id="scrub" min="0" max="0" value="0"
+          style="width:100%;accent-color:var(--cyan);cursor:pointer">
+        <div id="scrubInfo" style="background:var(--panel);border:1px solid var(--line);
+          border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:12px;
+          color:var(--dim);line-height:1.9">
+          <div>시각 <b id="sc-ts" style="color:var(--txt)">--</b></div>
+          <div>속도 <b id="sc-spd" style="color:var(--cyan)">--</b> km/h ·
+               G <b id="sc-g" style="color:var(--amber)">--</b></div>
+          <div>고도 <b id="sc-alt" style="color:var(--txt)">--</b> m ·
+               SOC <b id="sc-soc" style="color:var(--cyan)">--</b>%</div>
+        </div>
+      </div>
+
+      <div class="sect">통계</div>
+      <div class="cumgrid" id="cumBox" style="display:none">
+        <div class="metric"><div class="k">총 거리</div><div class="v cyan" id="c-dist">--<small>km</small></div></div>
+        <div class="metric"><div class="k">주행 횟수</div><div class="v" id="c-runs">--</div></div>
+        <div class="metric"><div class="k">최고 속도</div><div class="v amber" id="c-max">--<small>km/h</small></div></div>
+        <div class="metric"><div class="k">평균 속도</div><div class="v" id="c-avg">--<small>km/h</small></div></div>
+        <div class="metric"><div class="k">최대 G</div><div class="v red" id="c-g">--<small>G</small></div></div>
+        <div class="metric"><div class="k">주행 시간</div><div class="v" id="c-dur">--<small>min</small></div></div>
+        <div class="metric"><div class="k">누적 상승</div><div class="v" id="c-elev">--<small>m</small></div></div>
+        <div class="metric"><div class="k">사용 전력</div><div class="v cyan" id="c-used">--<small>Ah</small></div></div>
+        <div class="metric wide"><div class="k">전비</div><div class="v green" id="c-eff" style="font-size:16px">--</div></div>
+      </div>
+      <div class="astat" id="aStat">차량과 주행을 선택하세요.</div>
+
+      <!-- 그래프 X축 기준 -->
+      <div id="axisBox" style="display:none">
+        <div class="sect">그래프 X축</div>
+        <select id="xAxis">
+          <option value="idx">시간(샘플)</option>
+          <option value="dist">주행 거리</option>
+        </select>
+        <div class="zoomhint" style="margin-top:6px">
+          <span id="zoomInfo">전체 구간</span>
+          <button id="zoomReset">전체</button>
+        </div>
+        <div class="zoomhint" style="margin-top:4px;color:var(--dimmer)">
+          드래그=구간확대 · 휠=확대/축소 · 더블클릭=전체
+        </div>
+      </div>
+
+      <!-- 랩 분석 -->
+      <div id="lapBox" style="display:none">
+        <div class="sect">랩 분석</div>
+        <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+          <button class="btn2" id="slPick">출발선 지정</button>
+          <button class="btn2" id="slAuto">주행 시작점으로</button>
+          <button class="btn2" id="slClear">해제</button>
+        </div>
+        <div id="slInfo" style="font-family:var(--mono);font-size:10.5px;color:var(--dimmer);
+          margin-top:5px">출발선이 없습니다. [출발선 지정] 후 지도를 클릭하세요.</div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;
+          font-family:var(--mono);font-size:10.5px;color:var(--dim)">
+          폭 <input class="miniin" id="slWidth" type="number" value="40" min="5" max="300">m
+          최소랩 <input class="miniin" id="minLap" type="number" value="15" min="3">s
+          통과속도 <input class="miniin" id="minSpd" type="number" value="3" min="0" step="1">km/h
+          이탈 <input class="miniin" id="minAway" type="number" value="30" min="5">m
+        </div>
+        <div style="font-family:var(--mono);font-size:9.5px;color:var(--dimmer);margin-top:3px">
+          통과속도·이탈거리 = 정차 중 GPS 지터로 인한 허위 랩 차단용
+        </div>
+        <div id="lapWrap" style="margin-top:8px"></div>
+      </div>
+
+      <!-- 데이터 삭제 (이중 확인) -->
+      <div id="delBox" style="display:none">
+        <div class="sect">데이터 삭제</div>
+        <div class="danger">
+          <h5>⚠ 위험 구역</h5>
+          <div class="warn">삭제한 주행 데이터는 <b style="color:var(--red)">복구할 수 없습니다.</b>
+            차량 로컬의 CSV가 남아 있으면 backfill로 다시 올릴 수 있습니다.</div>
+          <button class="dbtn" id="delSess">선택한 주행 삭제</button>
+          <button class="dbtn" id="delVeh">이 차량 전체 삭제</button>
+          <!-- 2차 확인 패널 -->
+          <div id="delConfirm" style="display:none;margin-top:10px;padding-top:10px;
+            border-top:1px solid rgba(255,77,77,.3)">
+            <div id="delTarget" style="font-family:var(--mono);font-size:11px;
+              color:var(--txt);line-height:1.7;margin-bottom:8px"></div>
+            <div style="font-size:11px;color:var(--dim);margin-bottom:5px">
+              확인을 위해 <b id="delWord" style="color:var(--red);font-family:var(--mono)"></b>
+              를 그대로 입력하세요</div>
+            <input id="delVerify" class="miniin" style="width:100%;padding:6px"
+              autocomplete="off" placeholder="여기에 입력">
+            <button class="dbtn go" id="delGo" disabled>영구 삭제 실행</button>
+            <button class="dbtn" id="delCancel">취소</button>
+          </div>
+          <div id="delResult" style="font-family:var(--mono);font-size:11px;
+            color:var(--green);margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="sect" id="secSpeed">속도</div>
+      <div class="chartbox" id="boxSpeed"><h4>Speed km/h</h4><canvas class="chart" id="chSpeed"></canvas></div>
+      <div class="sect" id="secG">G-Force</div>
+      <div class="chartbox" id="boxGlon"><h4>Lon (accel/brake)</h4><canvas class="chart" id="chGlon"></canvas></div>
+      <div class="chartbox" id="boxGlat"><h4>Lat (cornering)</h4><canvas class="chart" id="chGlat"></canvas></div>
+      <div class="sect" id="secAlt" style="display:none">고도</div>
+      <div class="chartbox" id="boxAlt" style="display:none">
+        <h4>Altitude m</h4><canvas class="chart" id="chAlt"></canvas></div>
+      <div class="sect" id="secBatt" style="display:none">배터리</div>
+      <div class="chartbox" id="boxSoc" style="display:none">
+        <h4>SOC %</h4><canvas class="chart" id="chSoc"></canvas></div>
+      <div class="chartbox" id="boxUsed" style="display:none">
+        <h4>누적 사용량 Ah</h4><canvas class="chart" id="chUsed"></canvas></div>
+      <div class="chartbox" id="boxVolt" style="display:none">
+        <h4>전압 V</h4><canvas class="chart" id="chVolt"></canvas></div>
+      <div class="chartbox" id="boxCur" style="display:none">
+        <h4>전류 A (− 회생)</h4><canvas class="chart" id="chCur"></canvas></div>
+      <div class="chartbox" id="boxPow" style="display:none">
+        <h4>전력 W</h4><canvas class="chart" id="chPow"></canvas></div>
+      <div class="chartbox" id="boxTemp" style="display:none">
+        <h4>온도 °C (최고/최저)</h4><canvas class="chart" id="chTemp"></canvas></div>
+      <div class="chartbox" id="boxCell" style="display:none">
+        <h4>셀 전압 편차 mV</h4><canvas class="chart" id="chCell"></canvas></div>
+      <!-- 비교 그래프 (2개 지표 겹쳐보기) -->
+      <div class="sect" id="secCmp" style="display:none">비교</div>
+      <div id="cmpBox" style="display:none">
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <select id="cmpA" style="flex:1"></select>
+          <select id="cmpB" style="flex:1"></select>
+        </div>
+        <div class="chartbox"><h4 id="cmpTitle">비교</h4>
+          <canvas class="chart" id="chCmp" style="height:110px"></canvas></div>
+      </div>
+    </aside>
+  </section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+       ></script>
+<script>
+const UNIST=[35.572,129.189], GG_MAX=1.5;
+const $=id=>document.getElementById(id);
+const fmt=(x,d)=>(x==null||x===""||isNaN(x))?"--":Number(x).toFixed(d);
+const tileURL="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const tileOpt={maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'};
+
+/* ---------- 탭 ---------- */
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active"); $(t.dataset.view).classList.add("active");
+  const an=t.dataset.view==="analysis";
+  $("vehSel").style.display = (!an && vehicles.length>1) ? "inline-block":"none";
+  if(an){ ensureAmap(); loadVehicles(); }
+  else setTimeout(()=>liveMap.invalidateSize(),100);
+});
+
+/* ---------- 실시간 지도 ---------- */
+const liveMap=L.map("map",{zoomControl:true,attributionControl:false}).setView(UNIST,15);
+L.tileLayer(tileURL,tileOpt).addTo(liveMap);
+let carMarker=null, trackLine=null, trackPts=[], hasReal=false;
+function carIcon(){return L.divIcon({className:"",html:
+  '<div style="width:18px;height:18px;border-radius:50%;background:#4de0d4;'+
+  'box-shadow:0 0 14px #4de0d4;border:2px solid #0d0f12"></div>',
+  iconSize:[18,18],iconAnchor:[9,9]});}
+function resetTrack(){
+  if(trackLine){liveMap.removeLayer(trackLine);trackLine=null;}
+  if(carMarker){liveMap.removeLayer(carMarker);carMarker=null;}
+  trackPts=[];hasReal=false; liveMap.setView(UNIST,15);
+}
+function updateMapPosition(lat,lon){
+  if(lat==null||lon==null) return;
+  const p=[lat,lon];
+  if(!hasReal){hasReal=true;trackPts=[];liveMap.setView(p,17);
+    trackLine=L.polyline([],{color:"#4de0d4",weight:3,opacity:.8}).addTo(liveMap);
+    carMarker=L.marker(p,{icon:carIcon()}).addTo(liveMap);}
+  trackPts.push(p);trackLine.setLatLngs(trackPts);carMarker.setLatLng(p);
+  liveMap.panTo(p,{animate:true,duration:.5});
+}
+
+/* ---------- 멀티 차량 상태 ---------- */
+let vehicles=[];          // [{id,name}]
+let selected=null;        // 현재 표시중 vehicle id
+let store={};             // {vehicle: latest snapshot}
+
+function refreshVehSel(){
+  const sel=$("vehSel");
+  sel.classList.toggle("show", vehicles.length>1 &&
+    document.querySelector(".tab.active").dataset.view==="live");
+  sel.innerHTML=vehicles.map(v=>`<option value="${v.id}">${v.name}</option>`).join("");
+  if(selected) sel.value=selected;
+}
+function setVehicles(list){
+  vehicles=list||[];
+  // 선택 차량이 사라졌거나 없으면 첫 온라인으로
+  if(!selected || !vehicles.find(v=>v.id===selected))
+    selected = vehicles.length? vehicles[0].id : null;
+  refreshVehSel();
+  const on = vehicles.length>0;
+  $("statusDot").className="dot "+(on?"on":"off");
+  $("statusTxt").textContent = on ? (vehicles.length>1?`${vehicles.length}대 수신`:"수신 중") : "신호 없음";
+  $("offline").classList.toggle("show", !on);
+  if(!on){ $("d-speed").textContent="--"; }
+}
+$("vehSel").onchange=e=>{ selected=e.target.value; resetTrack();
+  if(store[selected]) renderLive(store[selected]); };
+
+/* ---------- 실시간 데이터 렌더 ---------- */
+function renderLive(s){
+  if(!s) return;
+  $("d-speed").textContent = s.fix ? (s.speed??"--") : "--";
+  $("d-head").innerHTML=(s.heading!=null?Math.round(s.heading):"--")+"<small>°</small>";
+  $("d-sats").textContent=s.sats??"--";
+  $("d-alt").innerHTML=(s.alt!=null?fmt(s.alt,0):"--")+"<small>m</small>";
+  $("d-hdop").textContent=s.hdop!=null?fmt(s.hdop,1):"--";
+  const gl=+s.g_lat||0, go=+s.g_lon||0;
+  const x=Math.max(-1,Math.min(1,gl/GG_MAX)), y=Math.max(-1,Math.min(1,go/GG_MAX));
+  $("d-gdot").style.left=(50+x*44)+"%"; $("d-gdot").style.top=(50-y*44)+"%";
+  $("d-gmag").textContent=fmt(Math.sqrt(gl*gl+go*go),2);
+  $("d-glon").textContent=fmt(go,2); $("d-glat").textContent=fmt(gl,2);
+  // 배터리 (없는 차량은 전부 --)
+  $("d-soc").innerHTML=fmt(s.soc,0)+"<small>%</small>";
+  $("d-volt").innerHTML=fmt(s.voltage,1)+"<small>V</small>";
+  const cur=+s.current;
+  $("d-cur").className="v "+(s.regen==1||cur<0?"green":(cur>0.2?"amber":""));
+  $("d-cur").innerHTML=fmt(s.current,1)+"<small>A</small>";
+  $("d-pwr").innerHTML=fmt(s.power_w,0)+"<small>W</small>";
+  $("d-remain").innerHTML=fmt(s.remain_ah,1)+"<small>Ah</small>";
+  $("d-range").innerHTML=(s.range_km!=null&&s.range_km!==""?fmt(s.range_km,0):"--")+"<small>km</small>";
+  $("d-tmax").innerHTML=(s.temp_max??"--")+"<small>°C</small>";
+  $("d-tmin").innerHTML=(s.temp_min??"--")+"<small>°C</small>";
+  $("d-cells").textContent=(s.cell_v_min!=null)?(s.cell_v_min+"~"+s.cell_v_max+" Δ"+s.cell_v_diff):"--";
+  const lvl=+s.alarm_level||0, al=$("alarm");
+  if(lvl===2){al.className="crit";al.textContent="⚠ "+(s.alarms||"위험");}
+  else if(lvl===1){al.className="warn";al.textContent="⚠ "+(s.alarms||"주의");}
+  else{al.className="";al.textContent="";}
+  if(s.utc){const[h,m,se]=s.utc.split(":").map(Number);
+    $("d-clock").textContent=[(h+9)%24,m,se].map(x=>String(x).padStart(2,"0")).join(":");}
+  updateMapPosition(s.lat,s.lon);
+}
+
+/* ---------- WS /live ---------- */
+let ws;
+function connect(){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/live`);
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==="init"){
+      setVehicles(m.vehicles);
+      store=m.latest||{};
+      if(selected){ resetTrack();
+        (m.recent&&m.recent[selected]||[]).forEach(p=>{if(p.lat!=null)updateMapPosition(p.lat,p.lon);});
+        if(store[selected]) renderLive(store[selected]); }
+    } else if(m.type==="live"){
+      store[m.vehicle]=m.data;
+      if(!vehicles.find(v=>v.id===m.vehicle)) setVehicles(m.vehicles||vehicles);
+      if(m.vehicle===selected) renderLive(m.data);
+    } else if(m.type==="vehicles"){
+      setVehicles(m.vehicles);
+    }
+  };
+  ws.onclose=()=>{$("statusDot").className="dot";$("statusTxt").textContent="재연결…";setTimeout(connect,2000);};
+  ws.onerror=()=>ws.close();
+}
+connect();
+
+/* ---------- 분석 탭 ---------- */
+let amap=null, aLine=null;
+function ensureAmap(){
+  if(amap){setTimeout(()=>amap.invalidateSize(),100);return;}
+  amap=L.map("amap",{attributionControl:false}).setView(UNIST,13);
+  L.tileLayer(tileURL,tileOpt).addTo(amap);
+  // 출발선 지정 모드에서 지도 클릭
+  amap.on("click",e=>{
+    if(!slPicking) return;
+    startLine={lat:e.latlng.lat, lon:e.latlng.lng,
+               heading:headingNear(e.latlng.lat,e.latlng.lng),
+               width:+$("slWidth").value||40};
+    slPicking=false; $("slPick").classList.remove("on");
+    amap.getContainer().style.cursor="";
+    drawStartLine(); renderLaps(); saveStartLine();
+  });
+}
+async function loadVehicles(){
+  try{
+    const j=await (await fetch("/api/vehicles")).json();
+    const sel=$("aVeh");
+    sel.innerHTML=(j.vehicles||[]).map(v=>
+      `<option value="${v.id}">${v.name}${v.online?" ●":""}</option>`).join("")||"<option>기록 없음</option>";
+    if(j.vehicles&&j.vehicles.length){ await loadStartLine(sel.value); loadSessions(sel.value); }
+  }catch(e){ $("aVeh").innerHTML="<option>불러오기 실패</option>"; }
+}
+$("aVeh").onchange=async e=>{ await loadStartLine(e.target.value); loadSessions(e.target.value); };
+function fmtSessLabel(s){
+  // 20260722_140000 -> 07/22 14:00
+  const m=/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})/.exec(s.session||"");
+  const when=m?`${m[2]}/${m[3]} ${m[4]}:${m[5]}`:(s.session||"");
+  const bits=[];
+  if(s.duration_sec!=null){const mi=Math.floor(s.duration_sec/60);
+    bits.push(mi>=1?`${mi}분`:`${Math.round(s.duration_sec)}초`);}
+  if(s.kind==="charge"){
+    // 충전 세션: 속도 대신 SOC 변화와 충전량
+    if(s.soc_from!=null&&s.soc_to!=null) bits.push(`SOC ${Math.round(s.soc_from)}→${Math.round(s.soc_to)}%`);
+    if(s.used_ah!=null&&s.used_ah<0) bits.push(`+${Math.abs(s.used_ah).toFixed(1)}Ah`);
+    return `🔋 ${when} · ${bits.join(" · ")}`;
+  }
+  if(s.kind==="idle"){
+    if(s.soc_from!=null) bits.push(`SOC ${Math.round(s.soc_from)}%`);
+    return `⏸ ${when}${bits.length?" · "+bits.join(" · "):""}`;
+  }
+  if(s.max_speed!=null) bits.push(`최고${Math.round(s.max_speed)}`);
+  if(s.used_ah!=null&&s.used_ah>0) bits.push(`${s.used_ah.toFixed(1)}Ah`);
+  else if(s.soc_drop!=null&&s.soc_drop>0) bits.push(`SOC-${s.soc_drop}%`);
+  if(s.has_track) bits.push("정밀");
+  return `${when}${bits.length?" · "+bits.join(" · "):""}`;
+}
+async function loadSessions(vehicle){
+  try{
+    const j=await (await fetch("/api/sessions?vehicle="+encodeURIComponent(vehicle))).json();
+    const opts=[`<option value="cum">전체 (누적)</option>`];
+    (j.sessions||[]).forEach(s=>
+      opts.push(`<option value="sess:${s.session}">${fmtSessLabel(s)}</option>`));
+    // 구버전: track 만 있는 세션 / session 없는 날짜
+    (j.track_only||[]).forEach(s=>opts.push(`<option value="track:${s}">궤적 · ${s}</option>`));
+    (j.days||[]).forEach(d=>opts.push(`<option value="day:${d}">요약 · ${d}</option>`));
+    $("aSess").innerHTML=opts.join("");
+  }catch(e){ $("aSess").innerHTML="<option>불러오기 실패</option>"; }
+}
+$("loadBtn").onclick=async()=>{
+  const vehicle=$("aVeh").value, val=$("aSess").value||"";
+  ensureAmap();
+  if(val==="cum"){ await loadCumulative(vehicle); return; }
+  $("cumBox").style.display="none";
+  let rows=[], srcNote="";
+  if(val.startsWith("sess:")){
+    const sid=val.slice(5);
+    // track(주행후 업로드)과 summary(실시간) 중 '샘플이 더 많은 쪽'을 사용.
+    // TELEM_LOG_RATE 가 UPLOAD_RATE 보다 느리면 track 이 오히려 거칠어지므로
+    // 무조건 track 을 쓰면 해상도가 떨어진다.
+    const [t,s]=await Promise.all([
+      fetch("/api/track?session="+encodeURIComponent(sid)).then(r=>r.json()),
+      fetch(`/api/session?session=${encodeURIComponent(sid)}&vehicle=${encodeURIComponent(vehicle)}`).then(r=>r.json())
+    ]);
+    const tc=t.count||0, sc=s.count||0;
+    rows = tc>=sc ? t.rows : s.rows;
+    srcNote = tc&&sc ? `${tc>=sc?"정밀궤적":"실시간"} 사용 (track ${tc} / 실시간 ${sc})` : "";
+  } else if(val.startsWith("track:")){
+    rows=(await (await fetch("/api/track?session="+encodeURIComponent(val.slice(6)))).json()).rows;
+  } else if(val.startsWith("day:")){
+    rows=(await (await fetch(`/api/history?date=${val.slice(4)}&vehicle=${encodeURIComponent(vehicle)}`)).json()).rows;
+  }
+  drawSession(rows,srcNote);
+};
+function drawTrack(pts,color){
+  clearTrackLayers();
+  if(pts.length){aLine=L.polyline(pts,{color:color,weight:3}).addTo(amap);
+    amap.fitBounds(aLine.getBounds(),{padding:[30,30]});}
+}
+/* ---------- 궤적 그라데이션 ---------- */
+let gradLayers=[];
+function clearTrackLayers(){
+  if(aLine){amap.removeLayer(aLine);aLine=null;}
+  gradLayers.forEach(l=>amap.removeLayer(l)); gradLayers=[];
+}
+// 값(0~1) -> 색 (파랑→청록→연두→주황→빨강)
+function heat(t){
+  t=Math.max(0,Math.min(1,t));
+  const stops=[[59,110,165],[77,224,212],[142,222,74],[255,176,67],[255,77,77]];
+  const x=t*(stops.length-1), i=Math.floor(x), f=x-i;
+  const a=stops[i], b=stops[Math.min(i+1,stops.length-1)];
+  return `rgb(${Math.round(a[0]+(b[0]-a[0])*f)},${Math.round(a[1]+(b[1]-a[1])*f)},${Math.round(a[2]+(b[2]-a[2])*f)})`;
+}
+function drawTrackGradient(rows,key){
+  clearTrackLayers();
+  const pts=rows.map(r=>(r.lat!=null&&r.lon!=null)?[r.lat,r.lon]:null);
+  const vals=rows.map(r=>{const v=r[key];return v==null||v===""?null:+v;});
+  const valid=vals.filter(v=>v!=null&&!isNaN(v));
+  if(!valid.length||key==="none"){                 // 값 없으면 단색
+    drawTrack(pts.filter(Boolean),"#ffb043");
+    $("lgMin").textContent="--"; $("lgMax").textContent="--";
+    return;
+  }
+  let mn=Math.min(...valid), mx=Math.max(...valid);
+  if(mx===mn) mx=mn+1;
+  $("lgMin").textContent=mn.toFixed(key==="speed"?0:1);
+  $("lgMax").textContent=mx.toFixed(key==="speed"?0:1);
+  const all=[];
+  for(let i=1;i<pts.length;i++){
+    if(!pts[i-1]||!pts[i]) continue;
+    const v=vals[i]!=null?vals[i]:vals[i-1];
+    const c=v==null?"#666":heat((v-mn)/(mx-mn));
+    const seg=L.polyline([pts[i-1],pts[i]],{color:c,weight:4,opacity:.95}).addTo(amap);
+    gradLayers.push(seg); all.push(pts[i-1],pts[i]);
+  }
+  if(all.length) amap.fitBounds(L.latLngBounds(all),{padding:[30,30]});
+}
+
+/* ---------- 세션 분석 ---------- */
+let sessRows=[], scrubMarker=null, sessDist=[];
+const CMP_KEYS={speed:"속도(km/h)",alt:"고도(m)",soc:"SOC(%)",
+  used_ah:"사용량(Ah)",voltage:"전압(V)",current:"전류(A)",power_w:"전력(W)",
+  temp_max:"온도(°C)",cell_v_diff:"셀편차(mV)",g_lon:"종G",g_lat:"횡G"};
+
+function hasKey(rows,k){return rows.some(r=>r[k]!=null&&r[k]!=="");}
+function colOf(rows,k){return rows.map(r=>{const v=r[k];return v==null||v===""?0:+v;});}
+
+function cumulDistance(rows){   // 각 점까지의 누적 거리(km)
+  const out=[0]; let d=0;
+  for(let i=1;i<rows.length;i++){
+    const a=rows[i-1],b=rows[i];
+    if(a.lat!=null&&b.lat!=null){
+      const R=6371,dLa=(b.lat-a.lat)*Math.PI/180,dLo=(b.lon-a.lon)*Math.PI/180;
+      const la1=a.lat*Math.PI/180,la2=b.lat*Math.PI/180;
+      const h=Math.sin(dLa/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dLo/2)**2;
+      const seg=2*R*Math.asin(Math.sqrt(h));
+      if(seg<1) d+=seg;
+    }
+    out.push(d);
+  }
+  return out;
+}
+
+function durationOf(rows){
+  // t_mono(경과초, 시계 점프에 무관) 우선. 없으면 ts 차이로 폴백.
+  if(rows.length<2) return null;
+  const m0=rows[0].t_mono, m1=rows[rows.length-1].t_mono;
+  if(m0!=null&&m1!=null&&m1>m0) return m1-m0;
+  const t0=Date.parse(rows[0].ts), t1=Date.parse(rows[rows.length-1].ts);
+  if(isNaN(t0)||isNaN(t1)||t1<t0) return null;
+  return (t1-t0)/1000;
+}
+function fmtDur(sec){
+  if(sec==null) return "--";
+  const m=Math.floor(sec/60), s=Math.round(sec%60);
+  return m>=60 ? `${Math.floor(m/60)}시간 ${m%60}분` : `${m}:${String(s).padStart(2,"0")}`;
+}
+
+let anMode="drive";        // "drive" | "batt"
+let sessKind="drive";       // "drive" | "charge" | "idle"
+
+function detectKind(rows){
+  const spd=colOf(rows,"speed");
+  const vmax=spd.length?Math.max(...spd):0;
+  const dkm=sessDist[sessDist.length-1]||0;
+  if(vmax>=3||dkm>=0.05) return "drive";
+  const cur=rows.filter(r=>r.current!=null).map(r=>+r.current);
+  if(cur.length){
+    const avg=cur.reduce((a,b)=>a+b,0)/cur.length;
+    if(avg<-0.5) return "charge";
+  }
+  const ua=rows.filter(r=>r.used_ah!=null).map(r=>+r.used_ah);
+  if(ua.length>1&&ua[ua.length-1]-ua[0]<-0.05) return "charge";
+  return "idle";
+}
+/* 누적값(used_ah/wh)의 세션 총량 = 마지막 − 처음. 충전(음수)도 올바르게 나온다. */
+function cumDelta(rows,key){
+  const a=rows.find(r=>r[key]!=null), b=[...rows].reverse().find(r=>r[key]!=null);
+  return (a&&b)?+b[key]-+a[key]:null;
+}
+function applyMode(){
+  $("mDrive").classList.toggle("on",anMode==="drive");
+  $("mBatt").classList.toggle("on",anMode==="batt");
+  $("modeBox").style.display=sessRows.length?"flex":"none";
+}
+function updateChartVisibility(rows){
+  const showDrive=anMode==="drive", showBatt=anMode==="batt";
+  $("secSpeed").style.display=$("boxSpeed").style.display=showDrive?"block":"none";
+  $("secG").style.display=showDrive?"block":"none";
+  $("boxGlon").style.display=$("boxGlat").style.display=showDrive?"block":"none";
+  const hasAlt=hasKey(rows,"alt");
+  $("secAlt").style.display=$("boxAlt").style.display=(showDrive&&hasAlt)?"block":"none";
+  const map={chSoc:"boxSoc",chUsed:"boxUsed",chVolt:"boxVolt",chCur:"boxCur",
+             chPow:"boxPow",chTemp:"boxTemp",chCell:"boxCell"};
+  const anyBatt=BATT_CHARTS.some(id=>{
+    const d=CHART_DEFS.find(x=>x.id===id); return d&&hasKey(rows,d.key); });
+  $("secBatt").style.display=(showBatt&&anyBatt)?"block":"none";
+  BATT_CHARTS.forEach(id=>{
+    const d=CHART_DEFS.find(x=>x.id===id);
+    $(map[id]).style.display=(showBatt&&d&&hasKey(rows,d.key))?"block":"none"; });
+  renderCharts();
+}
+
+function drawSession(rows,srcNote){
+  sessRows=rows; sessDist=cumulDistance(rows);
+  view={a:0,b:Math.max(0,rows.length-1)}; hoverIdx=null; scrubIdx=0;
+  sessKind=detectKind(rows);
+  // 세션 유형에 맞춰 모드 자동 선택 (이후 사용자가 토글로 바꿀 수 있음)
+  anMode = (sessKind==="drive") ? "drive" : "batt";
+  applyMode();
+  $("colorBox").style.display=(rows.length&&sessKind==="drive")?"block":"none";
+  $("axisBox").style.display=rows.length?"block":"none";
+  drawTrackGradient(rows,sessKind==="drive"?$("colorBy").value:"none");
+  wireCharts();
+  $("lapBox").style.display=(rows.length&&sessKind==="drive")?"block":"none";
+  $("delBox").style.display=rows.length?"block":"none";
+  selLap=-1;
+  if(sessKind==="drive"){ drawStartLine(); renderLaps(); } else { $("lapWrap").innerHTML=""; }
+
+  const dur=durationOf(rows);
+  const hz=(dur&&dur>0)?(rows.length/dur).toFixed(1):null;
+  const diag=`<span style="color:var(--dimmer)">`
+    +(hz?`· ${hz}Hz ${rows.length}샘플`:"")+(srcNote?` · ${srcNote}`:"")+`</span>`;
+
+  if(sessKind!=="drive"){
+    const ah=cumDelta(rows,"used_ah"), wh=cumDelta(rows,"used_wh");
+    const socs=rows.filter(r=>r.soc!=null).map(r=>+r.soc);
+    const cur=rows.filter(r=>r.current!=null).map(r=>+r.current);
+    const tmp=rows.filter(r=>r.temp_max!=null).map(r=>+r.temp_max);
+    const cd=rows.filter(r=>r.cell_v_diff!=null).map(r=>+r.cell_v_diff);
+    const label=sessKind==="charge"?"충전":"정차";
+    let h=`<b style="color:var(--cyan)">${label}</b> ${fmtDur(dur)}`;
+    if(socs.length){
+      const d=socs[socs.length-1]-socs[0];
+      h+=` · SOC <b>${socs[0].toFixed(0)}% → ${socs[socs.length-1].toFixed(0)}%</b>`
+        +` (<b>${d>=0?"+":""}${d.toFixed(1)}</b>%p)`;
+    }
+    if(ah!=null) h+=`<br>${ah<0?"충전량":"소비량"} <b>${Math.abs(ah).toFixed(2)}</b>Ah`
+                   +(wh!=null?` (<b>${Math.abs(wh).toFixed(0)}</b>Wh)`:"");
+    if(cur.length){
+      const avg=cur.reduce((a,b)=>a+b,0)/cur.length;
+      h+=` · 평균 전류 <b>${Math.abs(avg).toFixed(1)}</b>A`;
+      if(sessKind==="charge"&&socs.length>1&&socs[socs.length-1]<99&&dur>60){
+        const rate=(socs[socs.length-1]-socs[0])/(dur/3600);
+        if(rate>0.5) h+=`<br>현재 속도면 완충까지 약 <b>${fmtDur((100-socs[socs.length-1])/rate*3600)}</b>`;
+      }
+    }
+    if(tmp.length) h+=`<br>온도 <b>${Math.min(...tmp).toFixed(0)}~${Math.max(...tmp).toFixed(0)}</b>°C`;
+    if(cd.length) h+=` · 셀편차 <b>${Math.min(...cd)}~${Math.max(...cd)}</b>mV`;
+    $("aStat").innerHTML=h+`<br>${diag}`;
+  } else {
+    const spd=colOf(rows,"speed"),glon=colOf(rows,"g_lon"),glat=colOf(rows,"g_lat");
+    const top=Math.max(0,...spd).toFixed(0);
+    const mb=Math.min(0,...glon).toFixed(2),ma=Math.max(0,...glon).toFixed(2),
+          mc=Math.max(0,...glat.map(Math.abs)).toFixed(2);
+    const dkm=sessDist[sessDist.length-1]||0;
+    const avg=(dur&&dur>0&&dkm)?(dkm/(dur/3600)).toFixed(0):null;
+    let extra="";
+    if(hasKey(rows,"alt")){
+      const av=rows.filter(r=>r.alt!=null).map(r=>+r.alt);
+      extra+=`<br>고도 <b>${Math.min(...av).toFixed(0)}~${Math.max(...av).toFixed(0)}</b>m`;
+    }
+    const uah=cumDelta(rows,"used_ah");
+    if(uah!=null){
+      extra+=`${extra?" · ":"<br>"}사용 <b>${uah.toFixed(2)}</b>Ah`;
+      if(uah>0.01&&dkm>0.01) extra+=` (<b>${(dkm/uah).toFixed(1)}</b>km/Ah)`;
+    }
+    $("aStat").innerHTML=
+       `주행 <b>${fmtDur(dur)}</b> · 거리 <b>${dkm.toFixed(2)}</b>km`
+      +(avg?` · 평속 <b>${avg}</b>km/h`:"")
+      +`<br>최고 <b>${top}</b>km/h · 가속 <b>${ma}</b>G · 제동 <b>${mb}</b>G · 코너 <b>${mc}</b>G`
+      +extra+`<br>${diag}`;
+  }
+
+  updateChartVisibility(rows);
+
+  const avail=Object.keys(CMP_KEYS).filter(k=>hasKey(rows,k));
+  if(avail.length>=2){
+    $("secCmp").style.display=$("cmpBox").style.display="block";
+    const mk=()=>avail.map(k=>`<option value="${k}">${CMP_KEYS[k]}</option>`).join("");
+    $("cmpA").innerHTML=mk(); $("cmpB").innerHTML=mk();
+    if(anMode==="batt"){
+      $("cmpA").value=avail.includes("soc")?"soc":avail[0];
+      $("cmpB").value=avail.includes("voltage")?"voltage":(avail.includes("current")?"current":avail[1]);
+    } else {
+      $("cmpA").value=avail.includes("speed")?"speed":avail[0];
+      $("cmpB").value=avail.includes("soc")?"soc":(avail.includes("alt")?"alt":avail[1]);
+    }
+    drawCompare();
+  } else { $("secCmp").style.display=$("cmpBox").style.display="none"; }
+
+  if(rows.length>1){
+    $("scrubBox").style.display="block";
+    const sl=$("scrub"); sl.max=rows.length-1; sl.value=0; updateScrub(0);
+  } else $("scrubBox").style.display="none";
+}
+$("mDrive").onclick=()=>{ anMode="drive"; applyMode(); updateChartVisibility(sessRows); };
+$("mBatt").onclick=()=>{ anMode="batt"; applyMode(); updateChartVisibility(sessRows); };
+
+/* ===== 차트 시스템: 확대(드래그/휠) + 호버 값표시 =====
+   모든 그래프가 같은 X 구간(view)을 공유해서 함께 확대됨. */
+const CHART_DEFS=[
+  {id:"chSpeed", key:"speed",    color:"#4de0d4", unit:"km/h", dec:0},
+  {id:"chGlon",  key:"g_lon",    color:"#ffb043", unit:"G", dec:2, bipolar:true},
+  {id:"chGlat",  key:"g_lat",    color:"#4de0d4", unit:"G", dec:2, bipolar:true},
+  {id:"chAlt",   key:"alt",      color:"#8ede4a", unit:"m", dec:1},
+  {id:"chSoc",   key:"soc",      color:"#4de0d4", unit:"%", dec:1},
+  {id:"chUsed",  key:"used_ah",  color:"#ffb043", unit:"Ah", dec:2},
+  {id:"chVolt",  key:"voltage",  color:"#8ede4a", unit:"V", dec:2},
+  {id:"chCur",   key:"current",  color:"#ffb043", unit:"A", dec:1, bipolar:true},
+  {id:"chPow",   key:"power_w",  color:"#ff4d4d", unit:"W", dec:0, bipolar:true},
+  {id:"chTemp",  key:"temp_max",  color:"#ff4d4d", unit:"°C", dec:1, second:"temp_min"},
+  {id:"chCell",  key:"cell_v_diff", color:"#8ede4a", unit:"mV", dec:0},
+];
+// 차트별 분류: 주행 전용 / 배터리 전용
+const DRIVE_CHARTS=["chSpeed","chGlon","chGlat","chAlt"];
+const BATT_CHARTS=["chSoc","chUsed","chVolt","chCur","chPow","chTemp","chCell"];
+let view={a:0,b:0};          // 표시 구간 (절대 인덱스)
+let hoverIdx=null;           // 호버 중인 절대 인덱스
+let scrubIdx=0;              // 스크러버 위치
+let dragSel=null;            // {id,x0,x1} 드래그 선택 중
+let chartsWired=false;
+
+function nSess(){return sessRows.length;}
+function viewLen(){return Math.max(1,view.b-view.a);}
+function xLabel(i){         // X축 값 라벨
+  if($("xAxis").value==="dist") return (sessDist[i]||0).toFixed(2)+"km";
+  const r=sessRows[i]; if(!r) return String(i);
+  // t_mono 있으면 '시작 후 경과'로 표시 (시계 점프에 오염되지 않음)
+  const m0=sessRows[0]&&sessRows[0].t_mono;
+  if(r.t_mono!=null&&m0!=null){
+    const e=r.t_mono-m0;
+    return `${Math.floor(e/60)}:${String(Math.floor(e%60)).padStart(2,"0")}`;
+  }
+  return r.ts ? r.ts.slice(11,19) : String(i);
+}
+function updateZoomInfo(){
+  const full=(view.a===0&&view.b===nSess()-1);
+  $("zoomInfo").textContent = full ? "전체 구간"
+    : `${xLabel(view.a)} ~ ${xLabel(view.b)} (${view.b-view.a+1}샘플)`;
+}
+function resetView(){ view={a:0,b:Math.max(0,nSess()-1)}; hoverIdx=null; renderCharts(); }
+$("zoomReset").onclick=resetView;
+
+/* 캔버스 좌표 -> 절대 인덱스 */
+function xToIdx(cv,px){
+  const w=cv.clientWidth||1;
+  const t=Math.max(0,Math.min(1,px/w));
+  if($("xAxis").value==="dist"){
+    // 거리축: 구간 내 누적거리 기준 역변환
+    const d0=sessDist[view.a]||0, d1=sessDist[view.b]||0;
+    if(d1>d0){
+      const target=d0+t*(d1-d0);
+      let lo=view.a, hi=view.b;
+      while(lo<hi){const m=(lo+hi)>>1; if((sessDist[m]||0)<target) lo=m+1; else hi=m;}
+      return lo;
+    }
+  }
+  return Math.round(view.a + t*(view.b-view.a));
+}
+function attachChart(cv){
+  cv.addEventListener("mousemove",e=>{
+    const r=cv.getBoundingClientRect();
+    if(dragSel&&dragSel.id===cv.id){ dragSel.x1=e.clientX-r.left; }
+    hoverIdx=xToIdx(cv,e.clientX-r.left);
+    renderCharts();
+  });
+  cv.addEventListener("mouseleave",()=>{ hoverIdx=null; dragSel=null; renderCharts(); });
+  cv.addEventListener("mousedown",e=>{
+    const r=cv.getBoundingClientRect();
+    dragSel={id:cv.id,x0:e.clientX-r.left,x1:e.clientX-r.left};
+  });
+  cv.addEventListener("mouseup",e=>{
+    if(!dragSel||dragSel.id!==cv.id){dragSel=null;return;}
+    const dx=Math.abs(dragSel.x1-dragSel.x0);
+    if(dx>6){          // 6px 이상 끌면 확대
+      let i0=xToIdx(cv,Math.min(dragSel.x0,dragSel.x1));
+      let i1=xToIdx(cv,Math.max(dragSel.x0,dragSel.x1));
+      if(i1-i0>=2){ view={a:i0,b:i1}; }
+    }
+    dragSel=null; renderCharts();
+  });
+  cv.addEventListener("dblclick",resetView);
+  cv.addEventListener("wheel",e=>{
+    e.preventDefault();
+    const r=cv.getBoundingClientRect();
+    const c=xToIdx(cv,e.clientX-r.left);           // 커서 지점 고정 확대
+    const f=e.deltaY<0?0.75:1.35;
+    const half=Math.max(2,Math.round(viewLen()*f/2));
+    let a=Math.max(0,c-half), b=Math.min(nSess()-1,c+half);
+    if(b-a>=4){ view={a,b}; renderCharts(); }
+  },{passive:false});
+}
+function wireCharts(){
+  if(chartsWired) return; chartsWired=true;
+  [...CHART_DEFS.map(d=>d.id),"chCmp"].forEach(id=>{
+    const cv=$(id); if(!cv) return;
+    if(!$(id+"_ro")){                              // 값 표시줄 생성
+      const ro=document.createElement("div");
+      ro.id=id+"_ro"; ro.className="ro"; ro.textContent="—";
+      cv.parentNode.appendChild(ro);
+    }
+    attachChart(cv);
+  });
+}
+
+/* 단일 시리즈 그리기 (구간/호버/스크러버 반영) */
+function drawChart(def){
+  const cv=$(def.id); if(!cv) return;
+  const all=colOf(sessRows,def.key);
+  const data=all.slice(view.a,view.b+1);
+  const xs=$("xAxis").value==="dist"?sessDist.slice(view.a,view.b+1):null;
+  // second 가 있으면 2개 시리즈 (예: 온도 최고/최저)
+  const series=[{d:data,color:def.color}];
+  if(def.second&&hasKey(sessRows,def.second))
+    series.push({d:colOf(sessRows,def.second).slice(view.a,view.b+1),color:"#4de0d4"});
+  paint(cv,series,def.bipolar,xs);
+  // 값 표시줄
+  const ro=$(def.id+"_ro"); if(!ro) return;
+  const i=hoverIdx!=null?hoverIdx:scrubIdx;
+  if(i!=null&&sessRows[i]){
+    const v=all[i];
+    ro.innerHTML=`${xLabel(i)} → <b>${v==null?"--":v.toFixed(def.dec)}</b> ${def.unit}`;
+  } else ro.textContent="—";
+}
+/* 비교(2 시리즈) */
+function drawCompare(){
+  if($("cmpBox").style.display==="none")return;
+  const ka=$("cmpA").value, kb=$("cmpB").value; if(!ka||!kb)return;
+  $("cmpTitle").textContent=`${CMP_KEYS[ka]} vs ${CMP_KEYS[kb]}`;
+  const A=colOf(sessRows,ka), B=colOf(sessRows,kb);
+  const xs=$("xAxis").value==="dist"?sessDist.slice(view.a,view.b+1):null;
+  paint($("chCmp"),[{d:A.slice(view.a,view.b+1),color:"#4de0d4"},
+                    {d:B.slice(view.a,view.b+1),color:"#ffb043"}],false,xs,true);
+  const ro=$("chCmp_ro"); if(!ro)return;
+  const i=hoverIdx!=null?hoverIdx:scrubIdx;
+  if(i!=null&&sessRows[i]){
+    const fa=A[i]==null?"--":A[i].toFixed(2), fb=B[i]==null?"--":B[i].toFixed(2);
+    ro.innerHTML=`${xLabel(i)} → <b style="color:#4de0d4">${fa}</b> / `
+                +`<b style="color:#ffb043">${fb}</b>`;
+  } else ro.textContent="—";
+}
+function renderCharts(){
+  if(!sessRows.length) return;
+  if(view.b<=view.a) view={a:0,b:Math.max(0,nSess()-1)};
+  CHART_DEFS.forEach(d=>{ if(hasKey(sessRows,d.key)) drawChart(d); });
+  drawCompare();
+  updateZoomInfo();
+}
+
+/* 공용 캔버스 페인터: 여러 시리즈 + 격자 + 호버/스크러버 선 + 드래그 선택 */
+function paint(cv,series,bipolar,xs,dualScale){
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;const c=cv.getContext("2d");c.scale(dpr,dpr);
+  c.clearRect(0,0,w,h);
+  const n=series[0]?series[0].d.length:0; if(!n)return;
+  const span=xs&&xs.length===n?(xs[n-1]-xs[0]):0;
+  const X=i=>span>0?((xs[i]-xs[0])/span)*w:(n>1?i/(n-1)*w:0);
+  // 공통 스케일 (dualScale이면 시리즈별 독립)
+  let gMn=Infinity,gMx=-Infinity;
+  series.forEach(s=>{s.d.forEach(v=>{if(v<gMn)gMn=v;if(v>gMx)gMx=v;});});
+  series.forEach(s=>{
+    let mn,mx;
+    if(dualScale){mn=Math.min(...s.d);mx=Math.max(...s.d);}
+    else {mn=gMn;mx=gMx;}
+    if(bipolar){const a=Math.max(Math.abs(mn),Math.abs(mx),.1);mn=-a;mx=a;}
+    if(mx===mn)mx=mn+1;
+    s.Y=v=>h-(v-mn)/(mx-mn)*(h-6)-3;
+    s.mn=mn;s.mx=mx;
+  });
+  // 0 기준선
+  if(bipolar){c.strokeStyle="#232936";c.beginPath();
+    c.moveTo(0,series[0].Y(0));c.lineTo(w,series[0].Y(0));c.stroke();}
+  // 시리즈
+  series.forEach(s=>{
+    c.strokeStyle=s.color;c.lineWidth=1.5;c.beginPath();
+    s.d.forEach((v,i)=>i?c.lineTo(X(i),s.Y(v)):c.moveTo(X(i),s.Y(v)));c.stroke();
+  });
+  // 범위 라벨 (좌상단 최대 / 좌하단 최소)
+  c.font="9px ui-monospace,monospace";
+  if(dualScale&&series.length>1){
+    c.fillStyle=series[0].color;
+    c.fillText(`${series[0].mn.toFixed(1)}~${series[0].mx.toFixed(1)}`,2,9);
+    c.fillStyle=series[1].color;c.textAlign="right";
+    c.fillText(`${series[1].mn.toFixed(1)}~${series[1].mx.toFixed(1)}`,w-2,9);
+    c.textAlign="left";
+  } else {
+    c.fillStyle="#4a5364";
+    c.fillText(series[0].mx.toFixed(1),2,9);
+    c.fillText(series[0].mn.toFixed(1),2,h-2);
+  }
+  // 스크러버 위치선 (구간 안에 있을 때만)
+  if(scrubIdx>=view.a&&scrubIdx<=view.b){
+    const x=X(scrubIdx-view.a);
+    c.strokeStyle="#fff";c.lineWidth=1;c.globalAlpha=.45;
+    c.beginPath();c.moveTo(x,0);c.lineTo(x,h);c.stroke();c.globalAlpha=1;
+  }
+  // 호버 십자선
+  if(hoverIdx!=null&&hoverIdx>=view.a&&hoverIdx<=view.b){
+    const x=X(hoverIdx-view.a);
+    c.strokeStyle="#4de0d4";c.lineWidth=1;c.setLineDash([3,3]);
+    c.beginPath();c.moveTo(x,0);c.lineTo(x,h);c.stroke();c.setLineDash([]);
+    series.forEach(s=>{const v=s.d[hoverIdx-view.a];
+      if(v==null)return;
+      c.fillStyle=s.color;c.beginPath();c.arc(x,s.Y(v),3,0,7);c.fill();});
+  }
+  // 드래그 선택 영역
+  if(dragSel&&dragSel.id===cv.id){
+    const x0=Math.min(dragSel.x0,dragSel.x1),x1=Math.max(dragSel.x0,dragSel.x1);
+    c.fillStyle="rgba(77,224,212,.16)";c.fillRect(x0,0,x1-x0,h);
+    c.strokeStyle="#4de0d4";c.lineWidth=1;
+    c.beginPath();c.moveTo(x0,0);c.lineTo(x0,h);c.moveTo(x1,0);c.lineTo(x1,h);c.stroke();
+  }
+}
+function clearCharts(){
+  [...CHART_DEFS.map(d=>d.id),"chCmp"].forEach(id=>{
+    const cv=$(id); if(!cv)return;
+    const c=cv.getContext("2d"); c.clearRect(0,0,cv.width,cv.height);
+    const ro=$(id+"_ro"); if(ro) ro.textContent="—";
+  });
+}
+$("colorBy").onchange=()=>drawTrackGradient(sessRows,$("colorBy").value);
+$("xAxis").onchange=()=>renderCharts();
+$("cmpA").onchange=$("cmpB").onchange=()=>drawCompare();
+
+/* ===================== 랩 분석 ===================== */
+const M_LAT=111320, mLon=lat=>111320*Math.cos(lat*Math.PI/180);
+function toXY(lat,lon,ref){return {x:(lon-ref.lon)*mLon(ref.lat), y:(lat-ref.lat)*M_LAT};}
+function segX(p1,p2,p3,p4){          // p1->p2 와 p3-p4 교차 시 p1->p2 상 비율
+  const d=(p2.x-p1.x)*(p4.y-p3.y)-(p2.y-p1.y)*(p4.x-p3.x);
+  if(Math.abs(d)<1e-9) return null;
+  const t=((p3.x-p1.x)*(p4.y-p3.y)-(p3.y-p1.y)*(p4.x-p3.x))/d;
+  const u=((p3.x-p1.x)*(p2.y-p1.y)-(p3.y-p1.y)*(p2.x-p1.x))/d;
+  return (t<0||t>1||u<0||u>1)?null:t;
+}
+function lineEnds(sl){
+  const ref={lat:sl.lat,lon:sl.lon}, c=toXY(sl.lat,sl.lon,ref);
+  const h=sl.heading*Math.PI/180;
+  const dir={x:Math.sin(h),y:Math.cos(h)};      // 진행 방향(동,북)
+  const perp={x:dir.y,y:-dir.x};                 // 출발선 방향
+  const hw=(sl.width||40)/2;
+  return {ref,dir,a:{x:c.x+perp.x*hw,y:c.y+perp.y*hw},b:{x:c.x-perp.x*hw,y:c.y-perp.y*hw}};
+}
+function tOf(r){                                  // 시각(초). t_mono 우선
+  if(r.t_mono!=null) return +r.t_mono;
+  const t=Date.parse(r.ts); return isNaN(t)?null:t/1000;
+}
+let startLine=null, laps=[], selLap=-1, slPicking=false, slMarker=null, slLine=null;
+
+function detectLaps(rows, sl, minLapSec, minSpd, minAway){
+  if(!sl||rows.length<3) return {laps:[],cross:[]};
+  const SL=lineEnds(sl), cross=[];
+  let prevXY=null, prevI=-1, awayMax=0;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    if(r.lat==null||r.lon==null) continue;
+    const xy=toXY(r.lat,r.lon,SL.ref);
+    const away=Math.hypot(xy.x,xy.y);      // 출발선 중심에서의 거리
+    if(away>awayMax) awayMax=away;
+    if(prevXY){
+      const t=segX(prevXY,xy,SL.a,SL.b);
+      if(t!==null){
+        const mv={x:xy.x-prevXY.x,y:xy.y-prevXY.y};
+        const fwd = mv.x*SL.dir.x+mv.y*SL.dir.y>0;          // ① 역주행 제외
+        const spd = Math.max(+rows[prevI].speed||0, +r.speed||0);
+        if(fwd && spd>=minSpd){                              // ② 속도 게이트
+          const tp=tOf(rows[prevI]), tc=tOf(r);
+          const time=(tp!=null&&tc!=null)?tp+(tc-tp)*t:null;
+          const last=cross[cross.length-1];
+          // ③ 디바운스  ④ 최소 이탈거리 (정차 중 GPS 지터로 인한 허위 통과 차단)
+          const okTime = !last || time==null || last.time==null || time-last.time>=minLapSec;
+          const okAway = !last || awayMax>=minAway;
+          if(okTime&&okAway){ cross.push({i,time}); awayMax=0; }
+        }
+      }
+    }
+    prevXY=xy; prevI=i;
+  }
+  const out=[];
+  for(let k=1;k<cross.length;k++){
+    const a=cross[k-1], b=cross[k];
+    const i0=a.i, i1=b.i, seg=rows.slice(i0,i1+1);
+    const spd=seg.map(r=>+r.speed||0);
+    const gm=seg.map(r=>Math.hypot(+r.g_lon||0,+r.g_lat||0));
+    let dist=0;
+    for(let j=i0+1;j<=i1;j++) dist+=(sessDist[j]||0)-(sessDist[j-1]||0);
+    // 랩 내 정지 시간 (2km/h 미만) — 피트 스톱/대기가 섞인 랩 판별
+    let stop=0;
+    for(let j=i0+1;j<=i1;j++){
+      const t0=tOf(rows[j-1]), t1=tOf(rows[j]);
+      if(t0!=null&&t1!=null&&t1>t0&&t1-t0<10&&(+rows[j].speed||0)<2) stop+=t1-t0;
+    }
+    const u0=seg.find(r=>r.used_ah!=null), u1=[...seg].reverse().find(r=>r.used_ah!=null);
+    const ah=(u0&&u1)?+u1.used_ah-+u0.used_ah:null;
+    const w0=seg.find(r=>r.used_wh!=null), w1=[...seg].reverse().find(r=>r.used_wh!=null);
+    const wh=(w0&&w1)?+w1.used_wh-+w0.used_wh:null;
+    const socs=seg.filter(r=>r.soc!=null).map(r=>+r.soc);
+    const volts=seg.filter(r=>r.voltage!=null).map(r=>+r.voltage);
+    const time=(a.time!=null&&b.time!=null)?+(b.time-a.time).toFixed(2):null;
+    out.push({lap:k,i0,i1,time,
+      dist:+(dist).toFixed(3), stop:+stop.toFixed(1),
+      // 정지가 랩의 10% 넘으면 '오염된 랩' -> 베스트랩 후보 제외
+      dirty:(time!=null&&stop>Math.max(3,time*0.1)),
+      vmax:Math.max(0,...spd), vavg:spd.length?spd.reduce((x,y)=>x+y,0)/spd.length:0,
+      gmax:gm.length?Math.max(...gm):0,
+      ah:ah!=null?+ah.toFixed(3):null, wh:wh!=null?+wh.toFixed(1):null,
+      whkm:(wh!=null&&dist>0.01)?+(wh/dist).toFixed(1):null,
+      socDrop:socs.length>1?+(Math.max(...socs)-Math.min(...socs)).toFixed(1):null,
+      vmin:volts.length?+Math.min(...volts).toFixed(2):null});
+  }
+  return {laps:out, cross};
+}
+
+function fmtLapTime(s){
+  if(s==null) return "--";
+  const m=Math.floor(s/60), r=(s%60);
+  return m>0?`${m}:${r.toFixed(2).padStart(5,"0")}`:r.toFixed(2);
+}
+function renderLaps(){
+  const w=$("lapWrap");
+  if(!startLine){ w.innerHTML=""; return; }
+  const res=detectLaps(sessRows,startLine,
+    +$("minLap").value||15, +$("minSpd").value||3, +$("minAway").value||30);
+  laps=res.laps;
+  const cross=res.cross;
+  if(!laps.length){
+    w.innerHTML=`<div style="font-family:var(--mono);font-size:10.5px;color:var(--amber)">
+      랩 없음 (통과 ${cross.length}회) — 출발선 위치·폭 또는 아래 판정 조건을 조정하세요.</div>`;
+    return;
+  }
+  // 정지 섞인 랩(dirty)은 베스트 후보에서 제외
+  const clean=laps.filter(l=>l.time!=null&&!l.dirty);
+  const pool=clean.length?clean:laps.filter(l=>l.time!=null);
+  const best=pool.length?Math.min(...pool.map(l=>l.time)):null;
+  const bestIdx=best!=null?laps.findIndex(l=>l.time===best&&(clean.length?!l.dirty:true)):-1;
+  const hasBatt=laps.some(l=>l.ah!=null);
+  const anyStop=laps.some(l=>l.stop>=1);
+  let h=`<table class="laptbl"><thead><tr><th>랩</th><th>시간</th><th>거리</th>
+    <th>최고</th><th>평속</th><th>maxG</th>${anyStop?"<th>정지</th>":""}
+    ${hasBatt?"<th>Ah</th><th>Wh/km</th>":""}</tr></thead><tbody>`;
+  laps.forEach((l,idx)=>{
+    const cls=[idx===selLap?"sel":"", idx===bestIdx?"best":"", l.dirty?"dirty":""].join(" ").trim();
+    h+=`<tr data-i="${idx}" class="${cls}" ${l.dirty?'title="정지 시간이 포함된 랩 — 비교에서 제외"':""}>
+      <td>${l.lap}${l.dirty?" ⏸":""}</td><td>${fmtLapTime(l.time)}</td><td>${l.dist.toFixed(2)}</td>
+      <td>${l.vmax.toFixed(0)}</td><td>${l.vavg.toFixed(0)}</td><td>${l.gmax.toFixed(2)}</td>
+      ${anyStop?`<td>${l.stop>=1?l.stop.toFixed(0)+"s":"–"}</td>`:""}
+      ${hasBatt?`<td>${l.ah!=null?l.ah.toFixed(2):"--"}</td>
+                 <td>${l.whkm!=null?l.whkm:"--"}</td>`:""}</tr>`;
+  });
+  h+=`</tbody></table>`;
+  // 요약 + 출발 대기 정보
+  const valid=laps.filter(l=>l.time!=null);
+  if(valid.length){
+    const avg=pool.reduce((a,b)=>a+b.time,0)/(pool.length||1);
+    const cons=pool.length>1?Math.max(...pool.map(l=>l.time))-best:0;
+    h+=`<div style="font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:6px">
+      ${valid.length}랩 · 베스트 <b style="color:var(--cyan)">${fmtLapTime(best)}</b>
+      · 평균 ${fmtLapTime(avg)} · 편차 ${cons.toFixed(2)}s`
+      +(laps.length-clean.length>0&&clean.length
+        ?` <span style="color:var(--amber)">(정지 포함 ${laps.length-clean.length}랩 제외)</span>`:"")
+      +`</div>`;
+  }
+  // 출발 대기: 데이터 시작 ~ 첫 통과
+  if(cross.length&&cross[0].time!=null){
+    const t0=tOf(sessRows.find(r=>tOf(r)!=null)||{});
+    if(t0!=null){
+      const wait=cross[0].time-t0;
+      if(wait>5) h+=`<div style="font-family:var(--mono);font-size:10.5px;color:var(--dimmer);margin-top:3px">
+        출발 대기 ${fmtLapTime(wait)} (첫 통과까지) · 이 구간은 랩에 포함되지 않음</div>`;
+    }
+  }
+  w.innerHTML=h;
+  w.querySelectorAll("tr[data-i]").forEach(tr=>tr.onclick=()=>selectLap(+tr.dataset.i));
+}
+function selectLap(i){
+  if(i===selLap){ selLap=-1; view={a:0,b:Math.max(0,nSess()-1)}; }
+  else { selLap=i; const l=laps[i]; view={a:l.i0,b:l.i1}; }
+  hoverIdx=null; renderCharts(); renderLaps();
+}
+
+/* ---------- 출발선 지정 ---------- */
+function drawStartLine(){
+  if(slMarker){amap.removeLayer(slMarker);slMarker=null;}
+  if(slLine){amap.removeLayer(slLine);slLine=null;}
+  if(!startLine) return;
+  const SL=lineEnds(startLine);      // Leaflet 전역 L 과 겹치지 않게 SL 로
+  const toLL=p=>[startLine.lat+p.y/M_LAT, startLine.lon+p.x/mLon(startLine.lat)];
+  slLine=L.polyline([toLL(SL.a),toLL(SL.b)],
+    {color:"#fff",weight:3,dashArray:"6,4",opacity:.9}).addTo(amap);
+  slMarker=L.circleMarker([startLine.lat,startLine.lon],
+    {radius:5,color:"#fff",weight:2,fillColor:"#ff4d4d",fillOpacity:1}).addTo(amap);
+  $("slInfo").innerHTML=`출발선 ${startLine.lat.toFixed(5)}, ${startLine.lon.toFixed(5)}
+    · 방향 ${Math.round(startLine.heading)}° · 폭 ${startLine.width}m`;
+}
+const MOVING_KMH=3;      // 이 속도 이상을 '주행 중'으로 본다
+function headingNear(lat,lon){
+  // ★ 정차 중 점의 heading 은 GPS 지터로 무작위이므로 '주행 중' 점만 후보로 삼는다.
+  //   (대기 후 출발하는 실제 데이터에서 출발선 방향이 엉망이 되는 것을 방지)
+  let bi=-1, bd=1e18;
+  sessRows.forEach((r,i)=>{
+    if(r.lat==null||(+r.speed||0)<MOVING_KMH) return;
+    const d=(r.lat-lat)**2+(r.lon-lon)**2;
+    if(d<bd){bd=d;bi=i;}
+  });
+  if(bi<0){            // 주행 구간이 없으면 전체에서 재시도
+    sessRows.forEach((r,i)=>{
+      if(r.lat==null) return;
+      const d=(r.lat-lat)**2+(r.lon-lon)**2;
+      if(d<bd){bd=d;bi=i;}
+    });
+  }
+  if(bi<0) return 0;
+  // 주행 중 점의 heading 우선, 없으면 인접 주행 점으로 계산
+  if(sessRows[bi].heading!=null&&(+sessRows[bi].speed||0)>=MOVING_KMH)
+    return +sessRows[bi].heading;
+  let p=null,n=null;
+  for(let j=bi-1;j>=0;j--){ if(sessRows[j].lat!=null){p=sessRows[j];break;} }
+  for(let j=bi+1;j<sessRows.length;j++){ if(sessRows[j].lat!=null){n=sessRows[j];break;} }
+  if(!p||!n) return sessRows[bi].heading!=null?+sessRows[bi].heading:0;
+  const dx=(n.lon-p.lon)*mLon(lat), dy=(n.lat-p.lat)*M_LAT;
+  return (Math.atan2(dx,dy)*180/Math.PI+360)%360;
+}
+async function saveStartLine(){
+  const v=$("aVeh").value;
+  try{ await fetch("/api/setting",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({key:"startline:"+v,value:startLine})}); }catch(e){}
+}
+async function loadStartLine(vehicle){
+  startLine=null;
+  try{
+    const j=await (await fetch("/api/setting?key=startline:"+encodeURIComponent(vehicle))).json();
+    if(j.value) startLine=typeof j.value==="string"?JSON.parse(j.value):j.value;
+  }catch(e){}
+  if(startLine){ $("slWidth").value=startLine.width||40; }
+}
+$("slPick").onclick=()=>{
+  slPicking=!slPicking;
+  $("slPick").classList.toggle("on",slPicking);
+  $("slInfo").textContent=slPicking?"지도에서 출발선 위치를 클릭하세요":"";
+  if(amap) amap.getContainer().style.cursor=slPicking?"crosshair":"";
+};
+$("slAuto").onclick=()=>{
+  // ★ 첫 데이터 점이 아니라 '실제로 움직이기 시작한' 첫 점을 쓴다.
+  //   (출발선 위에서 대기하는 구간을 출발선으로 잡지 않도록)
+  const f=sessRows.find(r=>r.lat!=null&&(+r.speed||0)>=MOVING_KMH)
+        || sessRows.find(r=>r.lat!=null);
+  if(!f) return;
+  startLine={lat:f.lat,lon:f.lon,heading:headingNear(f.lat,f.lon),
+             width:+$("slWidth").value||40};
+  drawStartLine(); renderLaps(); saveStartLine();
+};
+$("slClear").onclick=()=>{
+  startLine=null; laps=[]; selLap=-1;
+  if(slMarker){amap.removeLayer(slMarker);slMarker=null;}
+  if(slLine){amap.removeLayer(slLine);slLine=null;}
+  $("slInfo").textContent="출발선이 없습니다. [출발선 지정] 후 지도를 클릭하세요.";
+  $("lapWrap").innerHTML=""; saveStartLine();
+};
+$("slWidth").onchange=()=>{ if(startLine){startLine.width=+$("slWidth").value||40;
+  drawStartLine(); renderLaps(); saveStartLine();} };
+$("minLap").onchange=$("minSpd").onchange=$("minAway").onchange=()=>renderLaps();
+
+/* ===================== 데이터 삭제 (이중 확인) ===================== */
+let delMode=null;      // "session" | "vehicle"
+function delReset(){
+  delMode=null; $("delConfirm").style.display="none";
+  $("delVerify").value=""; $("delGo").disabled=true;
+}
+async function delStart(mode){
+  const vehicle=$("aVeh").value;
+  const sel=$("aSess").value||"";
+  const sess=(mode==="session"&&sel.startsWith("sess:"))?sel.slice(5)
+            :(mode==="session"&&sel.startsWith("track:"))?sel.slice(6):null;
+  if(mode==="session"&&!sess){
+    $("delResult").style.color="var(--amber)";
+    $("delResult").textContent="세션(주행)을 먼저 선택하세요. '전체(누적)'은 개별 삭제 대상이 아닙니다.";
+    return;
+  }
+  delMode=mode;
+  const q=`/api/delete/preview?vehicle=${encodeURIComponent(vehicle)}`
+        +(sess?`&session=${encodeURIComponent(sess)}`:"");
+  let p={summary:"?",track:"?"};
+  try{ p=await (await fetch(q)).json(); }catch(e){}
+  const word=sess||vehicle;
+  $("delTarget").innerHTML= mode==="session"
+    ? `삭제 대상: <b style="color:var(--red)">${sess}</b><br>
+       실시간 ${p.summary}행 + 정밀궤적 ${p.track}행 = <b>${p.total}행</b>`
+    : `삭제 대상: <b style="color:var(--red)">${vehicle} 차량의 모든 주행</b><br>
+       실시간 ${p.summary}행 + 정밀궤적 ${p.track}행 = <b>${p.total}행</b>`;
+  $("delWord").textContent=word;
+  $("delVerify").value=""; $("delGo").disabled=true;
+  $("delConfirm").style.display="block";
+  $("delResult").textContent="";
+  $("delVerify").focus();
+}
+$("delSess").onclick=()=>delStart("session");
+$("delVeh").onclick=()=>delStart("vehicle");
+$("delCancel").onclick=delReset;
+$("delVerify").oninput=e=>{ $("delGo").disabled = e.target.value !== $("delWord").textContent; };
+$("delGo").onclick=async()=>{
+  const vehicle=$("aVeh").value;
+  const sel=$("aSess").value||"";
+  const sess=delMode==="session"
+    ? (sel.startsWith("sess:")?sel.slice(5):sel.slice(6)) : null;
+  $("delGo").disabled=true; $("delGo").textContent="삭제 중…";
+  try{
+    const r=await fetch("/api/delete",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({vehicle,session:sess,confirm:"DELETE",
+                           verify:$("delVerify").value})});
+    const j=await r.json();
+    if(r.ok){
+      $("delResult").style.color="var(--green)";
+      $("delResult").textContent=`삭제 완료: ${j.total}행 (실시간 ${j.deleted_summary} / 궤적 ${j.deleted_track})`;
+      delReset();
+      sessRows=[]; laps=[]; selLap=-1; startLine=startLine; clearCharts();
+      clearTrackLayers(); $("aStat").textContent="삭제되었습니다.";
+      ["scrubBox","colorBox","axisBox","lapBox","secCmp","cmpBox"].forEach(id=>$(id).style.display="none");
+      await loadSessions(vehicle);
+    } else {
+      $("delResult").style.color="var(--red)";
+      $("delResult").textContent="실패: "+(j.error||r.status);
+    }
+  }catch(e){
+    $("delResult").style.color="var(--red)";
+    $("delResult").textContent="실패: "+e;
+  }
+  $("delGo").textContent="영구 삭제 실행";
+};
+
+function updateScrub(i){
+  const r=sessRows[i]; if(!r)return;
+  if(r.lat!=null&&r.lon!=null){
+    const p=[r.lat,r.lon];
+    if(!scrubMarker){
+      scrubMarker=L.circleMarker(p,{radius:7,color:"#fff",weight:2,
+        fillColor:"#4de0d4",fillOpacity:1}).addTo(amap);
+    } else scrubMarker.setLatLng(p);
+  }
+  $("sc-ts").textContent = r.ts ? r.ts.replace("T"," ").slice(0,19) : "--";
+  $("sc-spd").textContent = fmt(r.speed,0);
+  $("sc-g").textContent = fmt(Math.hypot(+r.g_lon||0,+r.g_lat||0),2);
+  $("sc-alt").textContent = fmt(r.alt,1);
+  $("sc-soc").textContent = fmt(r.soc,0);
+  scrubIdx=i;
+  // 스크러버가 확대 구간 밖이면 구간을 그 지점으로 이동
+  if(i<view.a||i>view.b){const len=view.b-view.a;
+    view={a:Math.max(0,i-Math.round(len/2)),b:Math.min(nSess()-1,i+Math.round(len/2))};}
+  renderCharts();
+}
+$("scrub").oninput=e=>updateScrub(+e.target.value);
+async function loadCumulative(vehicle){
+  const j=await (await fetch("/api/cumulative?vehicle="+encodeURIComponent(vehicle))).json();
+  drawTrack((j.track||[]),"#4de0d4");
+  const s=j.stats||{};
+  $("cumBox").style.display="grid";
+  $("c-dist").innerHTML=fmt(s.distance_km,1)+"<small>km</small>";
+  $("c-runs").textContent=s.runs??"--";
+  $("c-max").innerHTML=fmt(s.max_speed,0)+"<small>km/h</small>";
+  $("c-avg").innerHTML=fmt(s.avg_speed,0)+"<small>km/h</small>";
+  $("c-g").innerHTML=fmt(s.max_g,2)+"<small>G</small>";
+  $("c-dur").innerHTML=fmt(s.duration_min,0)+"<small>min</small>";
+  $("c-elev").innerHTML=fmt(s.elev_gain_m,0)+"<small>m</small>";
+  $("c-used").innerHTML=(s.used_ah!=null?fmt(s.used_ah,1):"--")+"<small>Ah</small>";
+  $("c-eff").textContent = s.km_per_ah!=null
+    ? `${s.km_per_ah} km/Ah${s.wh_per_km!=null?` · ${s.wh_per_km} Wh/km`:""}` : "--";
+  $("aStat").innerHTML=`<b>${j.name}</b> 전체 누적`
+    +((s.first&&s.last)?`<br>${s.first} ~ ${s.last}`:"")
+    +`<br><span style="color:var(--dimmer)">· ${s.points}샘플</span>`;
+  // 누적 모드: 세션 전용 UI 숨김
+  ["scrubBox","colorBox","axisBox","lapBox","secCmp","cmpBox","secAlt","boxAlt","secBatt",
+   "boxSoc","boxUsed","boxVolt","boxCur","boxPow"].forEach(id=>$(id).style.display="none");
+  $("delBox").style.display="block";      // 누적 화면에서도 차량 전체 삭제는 가능
+  delReset();
+  if(scrubMarker){amap.removeLayer(scrubMarker);scrubMarker=null;}
+  sessRows=[];
+  clearCharts();
+}
+</script>
+</body>
+</html>

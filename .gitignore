@@ -1,0 +1,32 @@
+# ── 비밀 (절대 커밋 금지) ────────────────────────────────
+.env
+*.key
+*.psk
+shared.psk
+wg0.conf
+!deploy/**/*.conf.example
+.htpasswd
+cloudflare.ini
+*.pem
+
+# ── 주행 데이터 / DB ─────────────────────────────────────
+*.db
+*.db-journal
+*.sqlite3
+gps_logs/
+backup/
+*.csv
+
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ── OS / 에디터 ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

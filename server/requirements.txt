@@ -1,0 +1,4 @@
+# 서버 Pi4
+#   sudo apt install -y python3-aiohttp     (권장)
+#   또는 pip3 install -r requirements.txt --break-system-packages
+aiohttp>=3.9

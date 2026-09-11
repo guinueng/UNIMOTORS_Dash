@@ -1,0 +1,6 @@
+# 차량 Pi
+#   pip3 install -r requirements.txt --break-system-packages
+pyserial>=3.5           # GPS NMEA 시리얼 읽기
+python-can>=4.1.0       # Daly BMS SocketCAN
+websocket-client>=1.6   # 서버로 텔레메트리 push
+# backfill.py 는 표준 라이브러리만 사용한다 (의존성 없음)

@@ -1,0 +1,26 @@
+# /etc/wireguard/wg0.conf  (OCI 허브, 10.10.0.1)
+# ⚠️ 실제 키는 절대 커밋하지 말 것. 이 파일은 구조 예시일 뿐이다.
+[Interface]
+Address    = 10.10.0.1/24
+ListenPort = 51820
+PrivateKey = <SERVER_PRIVATE_KEY>
+
+[Peer]                              # PC (노트북)
+PublicKey    = <PC_PUBLIC_KEY>
+PresharedKey = <SHARED_PSK>
+AllowedIPs   = 10.10.0.2/32
+
+[Peer]                              # 차량 Pi
+PublicKey    = <CAR_PUBLIC_KEY>
+PresharedKey = <SHARED_PSK>
+AllowedIPs   = 10.10.0.3/32
+
+[Peer]                              # 기숙사 서버 Pi4
+PublicKey    = <SRV_PUBLIC_KEY>
+PresharedKey = <SHARED_PSK>
+AllowedIPs   = 10.10.0.9/32
+
+[Peer]                              # 폰 / 내부망 클라이언트
+PublicKey    = <PHONE_PUBLIC_KEY>
+PresharedKey = <SHARED_PSK>
+AllowedIPs   = 10.10.0.11/32

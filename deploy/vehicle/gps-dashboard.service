@@ -1,0 +1,16 @@
+[Unit]
+Description=UNIMOTORS GPS Dashboard Server
+After=lte-auto.service
+Wants=lte-auto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/unimotors/gps_server.py
+WorkingDirectory=/home/unimotors
+EnvironmentFile=-/etc/default/unimotors
+Restart=on-failure
+RestartSec=5
+User=unimotors
+
+[Install]
+WantedBy=multi-user.target

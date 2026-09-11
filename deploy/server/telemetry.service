@@ -1,0 +1,16 @@
+[Unit]
+Description=UNIMOTORS Telemetry Server
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/unimotors/telemetry_server.py
+WorkingDirectory=/home/unimotors
+EnvironmentFile=-/etc/default/unimotors
+Restart=on-failure
+RestartSec=5
+User=unimotors
+
+[Install]
+WantedBy=multi-user.target

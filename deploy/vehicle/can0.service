@@ -1,0 +1,16 @@
+# CAN 자동 up (방법 B). 장치 유닛에 묶여 부팅·핫플러그 모두에서 동작한다.
+# 방법 A(udev, 90-can.rules)와 둘 중 하나만 쓸 것.
+# systemd-networkd 는 쓰지 않는다 — NetworkManager(핫스팟)와 충돌 위험.
+[Unit]
+Description=Bring up can0 (250kbps, Daly BMS)
+BindsTo=sys-subsystem-net-devices-can0.device
+After=sys-subsystem-net-devices-can0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/ip link set can0 up type can bitrate 250000
+ExecStop=/sbin/ip link set can0 down
+
+[Install]
+WantedBy=sys-subsystem-net-devices-can0.device

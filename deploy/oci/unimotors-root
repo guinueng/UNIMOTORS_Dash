@@ -1,0 +1,23 @@
+# /etc/nginx/sites-available/unimotors-root
+# 랜딩 페이지: / 는 공개, /app 만 basic auth
+server {
+    listen 443 ssl;
+    server_name unimotors.example.com;
+    include snippets/unimotors-ssl.conf;
+
+    root /var/www/unimotors;
+    index index.html;
+
+    location / { try_files $uri $uri/ =404; }
+
+    location /app {
+        auth_basic "UNIMOTORS";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        try_files $uri $uri/ /app/index.html;
+    }
+}
+server {
+    listen 80;
+    server_name unimotors.example.com;
+    return 301 https://$host$request_uri;
+}

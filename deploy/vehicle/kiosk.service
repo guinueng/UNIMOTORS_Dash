@@ -1,0 +1,16 @@
+[Unit]
+Description=UNIMOTORS Dashboard Kiosk (local DSI display)
+After=gps-dashboard.service
+Wants=gps-dashboard.service
+
+[Service]
+Type=simple
+User=unimotors
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/unimotors/.Xauthority
+ExecStart=/usr/bin/startx /home/unimotors/kiosk.sh -- :0 -nocursor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

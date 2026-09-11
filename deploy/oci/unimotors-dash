@@ -1,0 +1,28 @@
+# /etc/nginx/sites-available/unimotors-dash
+# 차량 계기판 (차량 Pi 10.10.0.3:8080) — SSE
+# ⚠️ proxy_buffering off 만으로는 부족하다. gps_server.py 가
+#    protocol_version="HTTP/1.1" + chunked + X-Accel-Buffering:no 를 보내야 한다. (docs/16)
+server {
+    listen 443 ssl;
+    server_name dash.unimotors.example.com;
+    include snippets/unimotors-ssl.conf;
+
+    auth_basic "UNIMOTORS";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_pass http://10.10.0.3:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400;
+        proxy_buffering off;    # ★ SSE 실시간
+        proxy_cache off;
+    }
+}
+server {
+    listen 80;
+    server_name dash.unimotors.example.com;
+    return 301 https://$host$request_uri;
+}

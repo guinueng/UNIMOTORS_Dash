@@ -1,0 +1,5 @@
+# CAN 자동 up (방법 A, 권장). /etc/udev/rules.d/90-can.rules
+# can0.service(방법 B)와 둘 중 하나만 쓸 것.
+# `command -v ip` 결과가 /usr/sbin/ip 이면 아래 경로도 맞출 것.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="can*", \
+  RUN+="/sbin/ip link set %k up type can bitrate 250000"
