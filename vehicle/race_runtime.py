@@ -17,12 +17,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from telemetry_protocol import VERSION, finite
+    from telemetry_protocol import (
+        VERSION,
+        SCHEMA_VERSION,
+        CURRENT_CONVENTION,
+        finite,
+        validate_current_sign,
+    )
 except ImportError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shared"))
-    from telemetry_protocol import VERSION, finite
+    from telemetry_protocol import (
+        VERSION,
+        SCHEMA_VERSION,
+        CURRENT_CONVENTION,
+        finite,
+        validate_current_sign,
+    )
 
 PHASES = {"READY", "FORMATION", "RACE", "CHANGE", "RESTART", "COOLDOWN", "FINISHED"}
 EVENTS = {"practice", "acceleration", "gymkhana", "performance", "endurance"}
@@ -54,6 +66,7 @@ DEFAULT_PROFILE = {
     "voltage_offset": 0.0,
     "current_scale": 1.0,
     "current_offset": 0.0,
+    "current_sign": -1,
     "source_version": "",
     "approval_evidence": "",
     "course_version": "",
@@ -64,6 +77,19 @@ DEFAULT_PROFILE = {
     "restart_allowance_s": 120.0,
     "race_time_limit_s": None,
 }
+MEASUREMENT_KEYS = (
+    "voltage_scale",
+    "voltage_offset",
+    "current_scale",
+    "current_offset",
+    "current_sign",
+)
+DEVICE_KEYS = MEASUREMENT_KEYS + (
+    "speed_scale",
+    "speed_offset",
+    "calibration_id",
+    "calibration_verified",
+)
 
 
 def boot_id():
@@ -94,6 +120,7 @@ def validate_profile(changes, current=None):
     if not isinstance(changes, dict) or set(changes) - set(DEFAULT_PROFILE):
         raise ValueError("unknown profile field")
     profile.update(changes)
+    profile["current_sign"] = validate_current_sign(profile["current_sign"])
     version = finite(profile["version"])
     if version is None or version < 1 or int(version) != version:
         raise ValueError("invalid profile version")
@@ -191,7 +218,32 @@ def validate_saved_run(value):
         value.get("sectors"), list
     ):
         raise ValueError("invalid saved lap records")
+    legacy = "current_sign" not in value.get("profile", {})
+    if not isinstance(value.get("energy_reasons", []), list):
+        raise ValueError("invalid saved energy reasons")
     value["profile"] = validate_profile(value.get("profile", {}))
+    # v7 integrated native current as discharge-positive. Never retroactively flip it.
+    if legacy:
+        value["profile"]["current_sign"] = 1
+        value.setdefault("energy_reasons", []).append("legacy_polarity_unverified")
+    value.setdefault("energy_reasons", [])
+    value.setdefault("energy_revision", 0)
+    value.setdefault("measured_seconds", 0.0)
+    value.setdefault("budget_revision", None)
+    if not isinstance(value.get("last_faults", {}), dict):
+        raise ValueError("invalid saved fault history")
+    for key in ("measured_seconds", "energy_revision"):
+        number = finite(value[key])
+        if (
+            number is None
+            or number < 0
+            or (key == "energy_revision" and int(number) != number)
+        ):
+            raise ValueError("invalid saved " + key)
+    if not isinstance(value["energy_reasons"], list) or any(
+        not isinstance(x, str) for x in value["energy_reasons"]
+    ):
+        raise ValueError("invalid saved energy reasons")
     return value
 
 
@@ -269,6 +321,7 @@ class RaceRuntime:
         bms_ttl=1.5,
         slow_ttl=5.0,
         persist_interval=1.0,
+        current_sign=None,
     ):
         self.directory = Path(directory)
         self.vehicle, self.battery_epoch = vehicle, battery_epoch
@@ -277,6 +330,15 @@ class RaceRuntime:
         self.resume_window = resume_window
         self.gps_ttl, self.bms_ttl, self.slow_ttl = gps_ttl, bms_ttl, slow_ttl
         self.persist_interval = persist_interval
+        self.device_profile = copy.deepcopy(DEFAULT_PROFILE)
+        self.device_profile["current_sign"] = validate_current_sign(
+            current_sign
+            if current_sign is not None
+            else os.environ.get("UNIMOTORS_CURRENT_SIGN", "-1")
+        )
+        self.device_drivers = {}
+        self.device_driver_id = "driver1"
+        self.device_last_faults = {}
         self.lock = threading.RLock()
         self.durable = True
         self.open_error = None
@@ -317,7 +379,15 @@ class RaceRuntime:
         self.candidate = None
         if row:
             try:
-                old = validate_saved_run(json.loads(row[1]))
+                stored = json.loads(row[1])
+                had_polarity = "current_sign" in stored.get("profile", {})
+                old = validate_saved_run(stored)
+                for key in DEVICE_KEYS:
+                    if key != "current_sign" or had_polarity:
+                        self.device_profile[key] = old["profile"][key]
+                self.device_drivers = copy.deepcopy(old.get("drivers", {}))
+                self.device_driver_id = old.get("driver_id", "driver1")
+                self.device_last_faults = copy.deepcopy(old.get("last_faults", {}))
                 self.segment_parent = old.get("_last_segment_id")
                 embedded = old.pop("_candidate", None)
                 if embedded and old["phase"] != "FINISHED":
@@ -325,6 +395,15 @@ class RaceRuntime:
                     base["used_wh"] += old.get("used_wh", 0.0)
                     base["used_ah"] += old.get("used_ah", 0.0)
                     base["distance_km"] += old.get("distance_km", 0.0)
+                    base["measured_seconds"] += old.get("measured_seconds", 0.0)
+                    base["energy_reasons"] = sorted(
+                        set(base["energy_reasons"] + old["energy_reasons"])
+                    )
+                    if any(
+                        base["profile"][k] != old["profile"][k]
+                        for k in MEASUREMENT_KEYS
+                    ):
+                        base["energy_reasons"].append("mixed_measurement_basis")
                     base["external_used_wh"] = base.get(
                         "external_used_wh", 0.0
                     ) + old.get("external_used_wh", 0.0)
@@ -357,9 +436,11 @@ class RaceRuntime:
         self.gps, self.bms, self.bms_times = {}, {}, {}
         self.gps_time = None
         self.vi_previous = None
+        self.vi_break_from = None
         self.position_previous = None
         self.lap_started = None
         self.lap_start_wh = None
+        self.lap_energy_start = None
         self.interrupted_lap = bool(self.candidate)
         self.gates = []
         self.pending = []
@@ -403,9 +484,14 @@ class RaceRuntime:
             sectors=[],
             gap_seconds=0.0,
             lap_uncertain=False,
-            profile=copy.deepcopy(DEFAULT_PROFILE),
-            driver_id="driver1",
-            drivers={},
+            profile=copy.deepcopy(self.device_profile),
+            driver_id=self.device_driver_id,
+            drivers=copy.deepcopy(self.device_drivers),
+            energy_reasons=[],
+            energy_revision=0,
+            measured_seconds=0.0,
+            budget_revision=None,
+            last_faults=copy.deepcopy(self.device_last_faults),
             battery_epoch=self.battery_epoch,
             parent=None,
             change_started_utc=None,
@@ -450,6 +536,11 @@ class RaceRuntime:
                 and 0 <= age <= self.resume_window
                 and self.battery_epoch
                 and self.battery_epoch == self.candidate["state"].get("battery_epoch")
+                and not self.candidate["state"].get("energy_reasons")
+                and all(
+                    self.run["profile"][k] == self.candidate["state"]["profile"][k]
+                    for k in MEASUREMENT_KEYS
+                )
             ):
                 self.resume(confirm_same_battery=True, automatic=True)
 
@@ -471,6 +562,20 @@ class RaceRuntime:
             old["used_wh"] += staged["used_wh"]
             old["used_ah"] += staged["used_ah"]
             old["distance_km"] += staged["distance_km"]
+            old["measured_seconds"] += staged["measured_seconds"]
+            old["energy_reasons"] = sorted(
+                set(old["energy_reasons"] + staged["energy_reasons"])
+            )
+            if self.fault_fingerprint is not None:
+                old["last_faults"] = copy.deepcopy(staged["last_faults"])
+            if any(old["profile"][k] != staged["profile"][k] for k in MEASUREMENT_KEYS):
+                old["energy_reasons"].append("mixed_measurement_basis")
+                for key in DEVICE_KEYS:
+                    old["profile"][key] = staged["profile"][key]
+                old["energy_revision"] = (
+                    max(old["energy_revision"], staged["energy_revision"]) + 1
+                )
+                old["budget_revision"] = None
             old["external_used_wh"] = old.get("external_used_wh", 0.0) + staged.get(
                 "external_used_wh", 0.0
             )
@@ -494,9 +599,11 @@ class RaceRuntime:
             self.candidate = None
             self.sector_previous = None
             self.vi_previous = None
+            self.vi_break_from = None
             self.external_previous = None
             self.position_previous = None
             self.lap_started = None
+            self.lap_energy_start = None
             self.interrupted_lap = True
             self.gps, self.bms, self.bms_times, self.external = {}, {}, {}, {}
             self.gps_time, self.fault_fingerprint = None, None
@@ -511,13 +618,20 @@ class RaceRuntime:
             self.persist(force=True)
             self.candidate = None
             self.battery_epoch = battery_epoch
+            for key in DEVICE_KEYS:
+                self.device_profile[key] = self.run["profile"][key]
+            self.device_drivers = copy.deepcopy(self.run["drivers"])
+            self.device_driver_id = self.run["driver_id"]
+            self.device_last_faults = copy.deepcopy(self.run.get("last_faults", {}))
             self.run = self._new_run()
             self.segment, self.sequence = uuid.uuid4().hex, 0
             self.segment_parent = None
             self.increment_wh = self.increment_ah = 0.0
             self.vi_previous = self.position_previous = None
+            self.vi_break_from = None
             self.external_previous = None
             self.lap_started = self.lap_start_wh = None
+            self.lap_energy_start = None
             self.interrupted_lap = False
             self.sector_previous = None
             self.recovery = "new"
@@ -541,29 +655,64 @@ class RaceRuntime:
         with self.lock:
             previous_profile = self.run["profile"]
             p = validate_profile(changes, self.run["profile"])
+            measurement_changed = any(
+                p[k] != previous_profile[k] for k in MEASUREMENT_KEYS
+            )
+            if measurement_changed:
+                # Flush the previous basis into its own immutable capture segment.
+                self.tick()
+                self.segment_parent = self.segment
+                self.segment, self.sequence = uuid.uuid4().hex, 0
+                self.run["energy_revision"] += 1
+                self.run["budget_revision"] = None
+                if self.run["measured_seconds"] > 0:
+                    self.run["energy_reasons"].append("mixed_measurement_basis")
+                self.vi_previous = None
+                self.vi_break_from = None
+                for key in (
+                    "voltage",
+                    "current",
+                    "power_w",
+                    "regen",
+                    "raw_voltage",
+                    "raw_current",
+                ):
+                    self.bms.pop(key, None)
+                    self.bms_times.pop(key, None)
+                self.event(
+                    "measurement_basis_changed",
+                    {
+                        "before": {k: previous_profile[k] for k in MEASUREMENT_KEYS},
+                        "after": {k: p[k] for k in MEASUREMENT_KEYS},
+                    },
+                )
             if "usable_remaining_wh" in changes:
                 p["budget_reference_wh"] = self.run["used_wh"]
                 p["budget_reference_gap"] = self.run["gap_seconds"]
+                self.run["budget_revision"] = self.run["energy_revision"]
             self.run["profile"] = p
             p["version"] = int(self.run.get("_profile_revision", p["version"])) + 1
             self.run["_profile_revision"] = p["version"]
-            if any(
+            if measurement_changed or any(
                 p[k] != previous_profile[k]
                 for k in (
-                    "voltage_scale",
-                    "voltage_offset",
-                    "current_scale",
-                    "current_offset",
+                    "lap_line",
+                    "sectors",
+                    "direction",
+                    "lap_min_seconds",
+                    "lap_departure_m",
+                    "gps_max_hdop",
+                    "speed_scale",
+                    "speed_offset",
                 )
             ):
-                self.vi_previous = None
-                for key in ("voltage", "current", "power_w"):
-                    self.bms_times.pop(key, None)
-                self.event("calibration_changed", {"id": p["calibration_id"]})
-            self._configure_gates()
-            self.position_previous = None
-            self.lap_started = None
-            self.sector_previous = None
+                self._configure_gates()
+                self.position_previous = None
+                self.lap_started = None
+                self.lap_energy_start = None
+                self.sector_previous = None
+            for key in DEVICE_KEYS:
+                self.device_profile[key] = p[key]
             self.event("profile", {"profile": p})
             self.persist(force=True)
 
@@ -632,27 +781,52 @@ class RaceRuntime:
             self.event("lap_correction", {"count": int(count)})
             self.persist(force=True)
 
-    def update_bms(self, values, received=None):
+    def update_bms(self, values, received=None, *, canonical=False):
         now = self.clock.monotonic()
         with self.lock:
             p = self.run["profile"]
+            accepted_vi = set()
             faults = values.get("faults")
             if isinstance(faults, dict):
+                self.run["last_faults"] = copy.deepcopy(faults)
                 fingerprint = json.dumps(faults, sort_keys=True, ensure_ascii=False)
                 if fingerprint != self.fault_fingerprint:
                     self.event("bms_alarm", {"faults": faults, "fresh": True})
                     self.fault_fingerprint = fingerprint
             for key, value in values.items():
-                if key.startswith("_") or value is None:
+                if key in ("power_w", "regen", "raw_voltage", "raw_current"):
+                    continue  # Derived only from a valid, matched V/I response.
+                if key.startswith("_"):
                     continue
                 measured = (received or {}).get(key, now)
-                if finite(measured) is None or not 0 <= now - measured <= self.slow_ttl:
+                if finite(measured) is None or not 0 <= now - measured <= (
+                    self.bms_ttl if key in ("voltage", "current") else self.slow_ttl
+                ):
+                    if key in ("voltage", "current"):
+                        self.bms.pop(key, None)
+                        self.bms_times.pop(key, None)
+                        self._invalidate_vi()
+                    continue
+                if measured < self.bms_times.get(key, -1e9):
                     continue
                 if key in ("voltage", "current"):
                     number = finite(value)
                     if number is None:
+                        self.bms.pop(key, None)
+                        self.bms_times.pop(key, None)
+                        self._invalidate_vi()
+                        self.input_issues.append("BMS " + key)
                         continue
-                    value = number * p[key + "_scale"] + p[key + "_offset"]
+                    value = number
+                    if not canonical:
+                        self.bms["raw_" + key] = number
+                        self.bms_times["raw_" + key] = measured
+                        value = number * p[key + "_scale"] + p[key + "_offset"]
+                        if key == "current":
+                            value *= p["current_sign"]
+                    else:
+                        self.bms.pop("raw_" + key, None)
+                        self.bms_times.pop("raw_" + key, None)
                     if (
                         not math.isfinite(value)
                         or (key == "voltage" and not 0 <= value <= 1000)
@@ -661,14 +835,25 @@ class RaceRuntime:
                         self.bms.pop(key, None)
                         self.bms_times.pop(key, None)
                         self.input_issues.append("BMS " + key)
-                        self.vi_previous = None
+                        self._invalidate_vi()
                         continue
+                    self.input_issues = [
+                        x for x in self.input_issues if x != "BMS " + key
+                    ]
+                    accepted_vi.add(key)
+                elif value is None:
+                    continue
                 self.bms[key] = value
                 self.bms_times[key] = measured
             vi_times = [self.bms_times.get(k) for k in ("voltage", "current")]
+            if accepted_vi and (
+                accepted_vi != {"voltage", "current"}
+                or None in vi_times
+                or abs(vi_times[0] - vi_times[1]) >= 0.05
+            ):
+                self._invalidate_vi()
             if (
-                "voltage" in values
-                and "current" in values
+                accepted_vi == {"voltage", "current"}
                 and None not in vi_times
                 and abs(vi_times[0] - vi_times[1]) < 0.05
             ):
@@ -678,12 +863,21 @@ class RaceRuntime:
                     finite(self.bms.get("current")),
                 )
                 if voltage is None or current is None or voltage < 0:
-                    self.vi_previous = None
+                    self._invalidate_vi()
                     return
                 power = voltage * current
                 self.bms["power_w"] = power
                 self.bms_times["power_w"] = at
+                self.bms["regen"] = current < 0
+                self.bms_times["regen"] = at
                 prev = self.vi_previous
+                if self.vi_break_from is not None:
+                    missing = max(0, at - self.vi_break_from)
+                    self.run["gap_seconds"] += missing
+                    self.event(
+                        "bms_gap", {"seconds": missing, "reason": "invalid_pair"}
+                    )
+                    self.vi_break_from = None
                 if prev and 0 < at - prev[0] <= self.bms_ttl:
                     dt = at - prev[0]
                     wh, ah = (
@@ -694,10 +888,9 @@ class RaceRuntime:
                     self.run["used_ah"] += ah
                     self.increment_wh += wh
                     self.increment_ah += ah
+                    self.run["measured_seconds"] += dt
                 elif prev and at - prev[0] > self.bms_ttl:
                     self.run["gap_seconds"] += at - prev[0]
-                    self.run["lap_uncertain"] = True
-                    self.interrupted_lap = True
                     self.event("bms_gap", {"seconds": at - prev[0]})
                 self.vi_previous = (at, power, current)
             if values.get("charger_connected") and not self.run.get("_charger_seen"):
@@ -709,6 +902,14 @@ class RaceRuntime:
                 self.run["profile"]["usable_remaining_wh"] = None
             if values.get("charger_connected") is False:
                 self.run["_charger_seen"] = False
+
+    def _invalidate_vi(self):
+        if self.vi_previous and self.vi_break_from is None:
+            self.vi_break_from = self.vi_previous[0]
+        self.vi_previous = None
+        for key in ("power_w", "regen", "raw_voltage", "raw_current"):
+            self.bms.pop(key, None)
+            self.bms_times.pop(key, None)
 
     def update_gps(
         self, values, received=None, position_updated=True, position_time=None
@@ -785,7 +986,7 @@ class RaceRuntime:
                 if not gate.update(point, at):
                     continue
                 if self.sector_previous is not None:
-                    prior_at, prior_wh, prior_gate = self.sector_previous
+                    prior_at, prior_wh, prior_gate, energy_start = self.sector_previous
                     sector = dict(
                         from_gate=prior_gate,
                         to_gate=index,
@@ -793,11 +994,20 @@ class RaceRuntime:
                         wh=self.run["used_wh"] - prior_wh,
                         complete=index == (prior_gate + 1) % len(self.gates),
                         segment_id=self.segment,
+                        energy_complete=self._energy_complete(
+                            energy_start, at - prior_at
+                        ),
+                        energy_revision=self.run["energy_revision"],
                     )
                     self.run["sectors"].append(sector)
                     self.run["sectors"] = self.run["sectors"][-200:]
                     self.event("sector", sector)
-                self.sector_previous = (at, self.run["used_wh"], index)
+                self.sector_previous = (
+                    at,
+                    self.run["used_wh"],
+                    index,
+                    self._energy_marker(),
+                )
                 if index == 0 and p["lap_line"]:
                     if self.lap_started is not None:
                         lap = dict(
@@ -805,6 +1015,10 @@ class RaceRuntime:
                             wh=self.run["used_wh"] - self.lap_start_wh,
                             complete=not self.interrupted_lap,
                             formation=self.run["phase"] == "FORMATION",
+                            energy_complete=self._energy_complete(
+                                self.lap_energy_start, at - self.lap_started
+                            ),
+                            energy_revision=self.run["energy_revision"],
                         )
                         self.run["laps"].append(lap)
                         self.run["laps"] = self.run["laps"][-200:]
@@ -814,7 +1028,41 @@ class RaceRuntime:
                             self.run["lap_count"] += 1
                         self.event("lap", lap)
                     self.lap_started, self.lap_start_wh = at, self.run["used_wh"]
+                    self.lap_energy_start = self._energy_marker()
                     self.interrupted_lap = False
+
+    def _energy_marker(self):
+        return (
+            self.run["measured_seconds"],
+            self.run["gap_seconds"],
+            self.run["energy_revision"],
+        )
+
+    def _energy_complete(self, start, duration):
+        if start is None or duration <= 0 or self.run["energy_reasons"]:
+            return False
+        seconds, gap, revision = start
+        return bool(
+            revision == self.run["energy_revision"]
+            and gap == self.run["gap_seconds"]
+            and self.run["measured_seconds"] - seconds >= duration * 0.9
+            and self.vi_previous is not None
+            and 0 <= self.clock.monotonic() - self.vi_previous[0] <= self.bms_ttl
+        )
+
+    def _energy_quality(self):
+        if self.run["energy_reasons"]:
+            return "unverified_basis"
+        if self.run["gap_seconds"] > 0:
+            return "partial"
+        if self.run["measured_seconds"] <= 0:
+            return "waiting"
+        if (
+            self.vi_previous is None
+            or self.clock.monotonic() - self.vi_previous[0] > self.bms_ttl
+        ):
+            return "partial"
+        return "measured"
 
     def update_external_vi(self, data):
         if not isinstance(data, dict):
@@ -835,10 +1083,19 @@ class RaceRuntime:
         ):
             raise ValueError("invalid external V/I or age_seconds")
         now = self.clock.monotonic()
+        current_sign = validate_current_sign(data.get("current_sign", 1))
+        raw_current = current
+        current *= current_sign
         with self.lock:
             at = now - age
             previous = self.external_previous
-            identity = (data["source"], data["calibration_id"])
+            identity = (data["source"], data["calibration_id"], current_sign)
+            if previous and identity != previous[3]:
+                self.run["external_mixed_basis"] = True
+                self.event(
+                    "external_basis_changed",
+                    {"source": data["source"], "current_sign": current_sign},
+                )
             if (
                 previous
                 and identity == previous[3]
@@ -852,6 +1109,8 @@ class RaceRuntime:
                 calibration_id=data["calibration_id"],
                 voltage=voltage,
                 current=current,
+                raw_current=raw_current,
+                current_sign=current_sign,
                 received_mono=at,
                 verified=data.get("verified") is True,
             )
@@ -870,6 +1129,9 @@ class RaceRuntime:
             age_seconds=age,
             voltage=e["voltage"] if valid else None,
             current=e["current"] if valid else None,
+            raw_current=e["raw_current"] if valid else None,
+            current_sign=e["current_sign"],
+            current_convention=CURRENT_CONVENTION,
             delta_voltage=e["voltage"] - bms["voltage"]
             if valid and bms.get("voltage") is not None
             else None,
@@ -877,6 +1139,7 @@ class RaceRuntime:
             if valid and bms.get("current") is not None
             else None,
             measured_wh=self.run.get("external_used_wh", 0),
+            mixed_basis=self.run.get("external_mixed_basis", False),
             quality="bridge reported age; no official-meter equivalence",
         )
 
@@ -972,6 +1235,8 @@ class RaceRuntime:
                 in {
                     "voltage",
                     "current",
+                    "raw_voltage",
+                    "raw_current",
                     "power_w",
                     "soc",
                     "regen",
@@ -993,6 +1258,8 @@ class RaceRuntime:
             p["confirmed"]
             and not self.run["lap_uncertain"]
             and self.run["gap_seconds"] <= p["budget_reference_gap"]
+            and self.run["budget_revision"] == self.run["energy_revision"]
+            and not self.run["energy_reasons"]
             and remaining is not None
             and laps is not None
             and laps > self.run["lap_count"]
@@ -1004,7 +1271,10 @@ class RaceRuntime:
         recent = [
             lap["wh"]
             for lap in self.run["laps"][-3:]
-            if lap["complete"] and not lap["formation"]
+            if lap["complete"]
+            and lap.get("energy_complete")
+            and lap.get("energy_revision") == self.run["energy_revision"]
+            and not lap["formation"]
         ]
         return dict(
             status="estimated",
@@ -1030,7 +1300,7 @@ class RaceRuntime:
             warnings = []
             for text in faults.get("dangers", []):
                 warnings.append({"priority": 0, "text": text, "source": "BMS"})
-            previous_faults = self.bms.get("faults") or {}
+            previous_faults = self.bms.get("faults") or self.run.get("last_faults", {})
             if bms.get("faults") is None and previous_faults.get("dangers"):
                 warnings.append(
                     {
@@ -1039,7 +1309,11 @@ class RaceRuntime:
                         "source": "BMS_history",
                     }
                 )
-            if bms.get("voltage") is None or bms.get("current") is None:
+            if (
+                bms.get("voltage") is None
+                or bms.get("current") is None
+                or bms.get("power_w") is None
+            ):
                 warnings.append(
                     {"priority": 1, "text": "BMS 새 데이터 대기", "source": "validity"}
                 )
@@ -1091,7 +1365,11 @@ class RaceRuntime:
                         {"priority": 2, "text": message, "source": "team_reference"}
                     )
             budget = self._budget()
-            if bms.get("voltage") is None or bms.get("current") is None:
+            if (
+                bms.get("voltage") is None
+                or bms.get("current") is None
+                or bms.get("power_w") is None
+            ):
                 budget = {"status": "measurement_unavailable", "target_wh_lap": None}
             if (
                 budget.get("recent_wh_lap") is not None
@@ -1142,7 +1420,7 @@ class RaceRuntime:
                 sample_id=f"{self.vehicle}:{self.segment}:{self.sequence}",
                 boot_id=self.boot,
                 t_mono=now,
-                schema_version=7,
+                schema_version=SCHEMA_VERSION,
                 software_version=VERSION,
                 time_quality="trusted" if self.time_trusted() else "unverified",
                 replay=int(self.replay),
@@ -1153,6 +1431,11 @@ class RaceRuntime:
                 distance_km=self.run["distance_km"],
                 lap_count=self.run["lap_count"],
                 gap_seconds=self.run["gap_seconds"],
+                current_sign=p["current_sign"],
+                current_convention=CURRENT_CONVENTION,
+                energy_quality=self._energy_quality(),
+                energy_revision=self.run["energy_revision"],
+                measured_seconds=self.run["measured_seconds"],
                 phase=self.run["phase"],
                 driver_id=self.run["driver_id"],
                 recovery_parent=self.run.get("parent"),
@@ -1176,6 +1459,8 @@ class RaceRuntime:
             for key in (
                 "voltage",
                 "current",
+                "raw_voltage",
+                "raw_current",
                 "soc",
                 "power_w",
                 "regen",
@@ -1189,6 +1474,8 @@ class RaceRuntime:
                 "cell_v_diff",
             ):
                 flat[key] = bms.get(key)
+            if flat.get("regen") is not None:
+                flat["regen"] = int(bool(flat["regen"]))
             flat["balancing"] = (
                 int(bool(bms["any_balancing"]))
                 if bms.get("any_balancing") is not None
@@ -1196,7 +1483,9 @@ class RaceRuntime:
             )
             checks = dict(
                 gps=bool(gps_valid),
-                bms=bms.get("voltage") is not None and bms.get("current") is not None,
+                bms=bms.get("voltage") is not None
+                and bms.get("current") is not None
+                and bms.get("power_w") is not None,
                 storage=health["storage_ok"] and not health["record_stale"],
                 space=not health["disk_low"],
                 profile=p["confirmed"],
@@ -1214,13 +1503,14 @@ class RaceRuntime:
                     lap_uncertain=self.run["lap_uncertain"],
                     battery_epoch=self.battery_epoch,
                     calibration_verified=p["calibration_verified"],
+                    energy_reasons=sorted(set(self.run["energy_reasons"])),
                 ),
                 ensure_ascii=False,
             )
             return dict(
                 flat,
                 bms=bms,
-                bms_ok=bms.get("voltage") is not None,
+                bms_ok=bms.get("power_w") is not None,
                 warnings=sorted(warnings, key=lambda x: x["priority"]),
                 commands=commands,
                 health=health,

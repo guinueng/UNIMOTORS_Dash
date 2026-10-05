@@ -21,7 +21,12 @@ class Clock:
 
 def runtime(path, clock, boot="boot-a", trusted=True, epoch="pack-a"):
     return RaceRuntime(
-        path, clock=clock, boot=boot, time_trusted=lambda: trusted, battery_epoch=epoch
+        path,
+        clock=clock,
+        boot=boot,
+        time_trusted=lambda: trusted,
+        battery_epoch=epoch,
+        current_sign=1,  # These legacy synthetic fixtures use discharge-positive native input.
     )
 
 

@@ -562,7 +562,8 @@ def db_query_cumulative(vehicle):
     conn = _db_connect()
     try:
         cur = conn.execute(
-            "SELECT ts,lat,lon,speed,g_lon,g_lat,alt,used_ah,used_wh,session,t_mono "
+            "SELECT ts,lat,lon,speed,g_lon,g_lat,alt,used_ah,used_wh,session,t_mono,"
+            "energy_increment_wh,charge_increment_ah,current_convention,energy_quality "
             "FROM summary WHERE vehicle=? ORDER BY ts",
             (vehicle,),
         )
@@ -577,7 +578,7 @@ def db_query_cumulative(vehicle):
     total_time = 0.0
     gain = 0.0  # 누적 상승고도(m)
     tot_ah = 0.0
-    tot_wh = 0.0  # 세션별 사용량 합
+    tot_wh = 0.0  # Unique measured increments; legacy fallback is labelled separately.
     days = set()
     sessions = set()
     prev_pt = None
@@ -587,16 +588,47 @@ def db_query_cumulative(vehicle):
     prev_sess = None
     sess_ah = {}
     sess_wh = {}
-    for ts, lat, lon, spd, glon, glat, alt, uah, uwh, sess, tmono in rows:
+    known_wh, known_ah = False, False
+    unverified_energy = False
+    energy_partial = False
+    for (
+        ts,
+        lat,
+        lon,
+        spd,
+        glon,
+        glat,
+        alt,
+        uah,
+        uwh,
+        sess,
+        tmono,
+        dwh,
+        dah,
+        convention,
+        quality,
+    ) in rows:
+        if dwh is not None:
+            tot_wh += dwh
+            known_wh = True
+        if dah is not None:
+            tot_ah += dah
+            known_ah = True
+        if (dwh is not None or dah is not None) and (
+            convention != "discharge_positive" or quality == "unverified_basis"
+        ):
+            unverified_energy = True
+        if quality in {"partial", "waiting"}:
+            energy_partial = True
         if ts:
             days.add(ts[:10])
         if sess:
             sessions.add(sess)
-            # 세션별 최종 사용량 (누적값이라 최대치가 그 세션 총량)
-            if uah is not None:
-                sess_ah[sess] = max(sess_ah.get(sess, 0), uah)
-            if uwh is not None:
-                sess_wh[sess] = max(sess_wh.get(sess, 0), uwh)
+            # Legacy fallback only. Net consumption can decrease during regeneration.
+            if uah is not None and dah is None:
+                sess_ah[sess] = uah
+            if uwh is not None and dwh is None:
+                sess_wh[sess] = uwh
         if spd is not None:
             speeds.append(spd)
         if glon is not None and glat is not None:
@@ -641,8 +673,11 @@ def db_query_cumulative(vehicle):
                     total_time += dt
             prev_t = t
 
-    tot_ah = sum(sess_ah.values())
-    tot_wh = sum(sess_wh.values())
+    legacy_wh, legacy_ah = sum(sess_wh.values()), sum(sess_ah.values())
+    if not known_ah:
+        tot_ah = legacy_ah
+    if not known_wh:
+        tot_wh = legacy_wh
 
     # 궤적 다운샘플 (너무 많으면 지도 부담)
     if len(pts) > 3000:
@@ -666,14 +701,32 @@ def db_query_cumulative(vehicle):
             "max_g": round(max(gmags), 2) if gmags else 0,
             "runs": len(sessions) if sessions else len(days),
             "elev_gain_m": round(gain, 0),
-            "used_ah": round(tot_ah, 2) if tot_ah else None,
-            "used_wh": round(tot_wh, 1) if tot_wh else None,
+            "used_ah": round(tot_ah, 2) if known_ah or sess_ah else None,
+            "used_wh": round(tot_wh, 1) if known_wh or sess_wh else None,
+            "energy_basis": "unverified"
+            if unverified_energy
+            else "measured_increments"
+            if known_wh and not sess_wh
+            else "mixed_legacy_excluded"
+            if known_wh
+            else "legacy_unverified",
+            "legacy_used_wh": legacy_wh if sess_wh else None,
+            "legacy_used_ah": legacy_ah if sess_ah else None,
+            "energy_partial": energy_partial,
             # 전비: km per Ah / Wh per km (배터리 데이터 있을 때만)
             "km_per_ah": round(dist_km / tot_ah, 2)
-            if tot_ah > 0.01 and dist_km
+            if known_ah
+            and not unverified_energy
+            and not energy_partial
+            and tot_ah > 0.01
+            and dist_km
             else None,
             "wh_per_km": round(tot_wh / dist_km, 1)
-            if tot_wh > 0.1 and dist_km > 0.01
+            if known_wh
+            and not unverified_energy
+            and not energy_partial
+            and tot_wh > 0.1
+            and dist_km > 0.01
             else None,
         },
     }

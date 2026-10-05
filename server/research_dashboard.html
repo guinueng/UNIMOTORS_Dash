@@ -55,7 +55,7 @@ async function refresh(){
  const elapsed=Date.now()/1000-(v.received_at?.[selected]||0);const fresh=elapsed<=3;
  $('speed').textContent=fresh?fmt(s.speed,0):'--';$('wh').textContent=fmt(s.used_wh,1);$('temp').textContent=fresh?fmt(s.temp_max,0):'--';
  const h=s.health||{};$('backlog').textContent=fmt(h.backlog,0);
- $('health').textContent=(fresh?'차량 수신':'차량 데이터 지연')+' · '+(s.phase||'--')+' · '+(h.storage_ok?'로컬 기록':'기록 확인')+' · '+(s.recovery||'--');
+ $('health').textContent=(fresh?'차량 수신':'차량 데이터 지연')+' · '+(s.phase||'--')+' · '+(h.storage_ok?'로컬 기록':'기록 확인')+' · '+(s.recovery||'--')+' · 계측 '+(s.energy_quality||'미확정')+(fresh?' · 원본 '+fmt(s.raw_current,1)+' A → '+fmt(s.current,1)+' A (×'+s.current_sign+')':'');
  $('preflight').textContent=Object.entries(s.preflight||{}).map(([k,x])=>k+': '+(x?'확인':'확인 필요')).join(' / ');
  lastLive=Date.now();await commands();
 }
@@ -70,9 +70,9 @@ function plot(records){const c=$('chart'),ctx=c.getContext('2d');ctx.clearRect(0
  if(!started||r.segment_id!==segment)ctx.moveTo(x,y);else ctx.lineTo(x,y);started=true;segment=r.segment_id;});ctx.stroke();
  ctx.fillStyle='#c5d2d9';ctx.font='14px sans-serif';ctx.fillText(fmt(lo,1)+' ~ '+fmt(hi,1)+' Wh · 수집 구간 사이 연결 생략',20,18);}
 async function load(){if(!$('race').value)return;report=await get('/api/race-report?vehicle='+encodeURIComponent($('vehicle').value)+'&race_session_id='+encodeURIComponent($('race').value));
- plot(report.timeline||[]);$('summary').textContent='총 '+report.sample_count+' 표본 · 기록 구간범위 '+fmt(report.measured_segment_seconds,1)+'s · 관측 증가량 '+fmt(report.measured_increment_wh,2)+' Wh';
+ plot(report.timeline||[]);$('summary').textContent='총 '+report.sample_count+' 표본 · 기록 구간범위 '+fmt(report.measured_segment_seconds,1)+'s · 관측 증가량 '+fmt(report.measured_increment_wh,2)+' Wh · 부호 기준 '+(report.energy_basis||'미확정')+' · 계측 '+(report.energy_quality||'미확정');
  $('events').replaceChildren();for(const e of report.events||[])row('events',[e.kind,new Date(e.ts*1000).toLocaleString(),JSON.stringify(e.detail)]);
- $('sectors').replaceChildren();for(const s of report.sectors||[])row('sectors',[s.from_gate+' → '+s.to_gate,fmt(s.seconds,2),fmt(s.wh,2),s.complete?'유효 구간':'순서/경계 미확정']);}
+ $('sectors').replaceChildren();for(const s of report.sectors||[])row('sectors',[s.from_gate+' → '+s.to_gate,fmt(s.seconds,2),fmt(s.wh,2),!s.complete?'순서/경계 미확정':s.energy_complete?'유효 시간·에너지':'시간 유효 · 에너지 미확정']);}
 $('vehicle').onchange=()=>races().then(load).catch(error);$('load').onclick=()=>races().then(load).catch(error);
 $('race').onchange=()=>load().catch(error);
 $('send').onclick=async()=>{try{const s=live[$('vehicle').value];if(!s?.race_session_id)throw Error('현재 차량 경기 ID를 먼저 확인하세요');

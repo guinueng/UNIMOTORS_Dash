@@ -6,7 +6,9 @@ import io
 import json
 import math
 
-VERSION = "7.0.0"
+VERSION = "7.1.0"
+SCHEMA_VERSION = 8
+CURRENT_CONVENTION = "discharge_positive"
 LEGACY_FIELDS = [
     "ts",
     "vehicle",
@@ -62,6 +64,13 @@ EXTRA_FIELDS = [
     "recovery_parent",
     "replay",
     "meta",
+    "raw_voltage",
+    "raw_current",
+    "current_sign",
+    "current_convention",
+    "energy_quality",
+    "energy_revision",
+    "measured_seconds",
 ]
 FIELDS = LEGACY_FIELDS + EXTRA_FIELDS
 TEXT_FIELDS = {
@@ -80,6 +89,8 @@ TEXT_FIELDS = {
     "driver_id",
     "recovery_parent",
     "meta",
+    "current_convention",
+    "energy_quality",
 }
 
 
@@ -91,6 +102,13 @@ def finite(value):
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def validate_current_sign(value):
+    number = finite(value)
+    if number not in (-1, 1):
+        raise ValueError("current_sign must be -1 or 1")
+    return int(number)
 
 
 def normalize_sample(record):
@@ -110,6 +128,13 @@ def normalize_sample(record):
             ):
                 raise ValueError("field too long: " + key)
         else:
+            if key in {"fix", "regen", "balancing", "replay"} and value in (
+                "True",
+                "False",
+            ):
+                value = int(
+                    value == "True"
+                )  # Read historical Python boolean CSV cells.
             if isinstance(value, bool):
                 value = int(value)
             if value in ("", None):
@@ -120,6 +145,10 @@ def normalize_sample(record):
                     raise ValueError("non-finite number: " + key)
     if not out.get("vehicle") or not out.get("ts"):
         raise ValueError("vehicle and ts are required")
+    if record.get("current_sign") not in (None, ""):
+        out["current_sign"] = validate_current_sign(record["current_sign"])
+    if out.get("current_convention") not in (None, CURRENT_CONVENTION):
+        raise ValueError("unknown current convention")
     if not out.get("sample_id"):
         # Compatibility only. v7 IDs never depend on the wall clock.
         identity = json.dumps(
@@ -165,5 +194,7 @@ def csv_text(records):
     writer = csv.DictWriter(buffer, fieldnames=FIELDS, extrasaction="ignore")
     writer.writeheader()
     for record in records:
-        writer.writerow(record)
+        writer.writerow(
+            {k: int(v) if isinstance(v, bool) else v for k, v in record.items()}
+        )
     return buffer.getvalue()

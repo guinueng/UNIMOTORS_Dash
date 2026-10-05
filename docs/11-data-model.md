@@ -1,6 +1,8 @@
-# 데이터 모델 (32필드 스키마 · 시계 점프)
+# 데이터 모델 (기존 32필드 기록 · 현재 59필드)
 
 > TELEM_FIELDS · 누적 사용량 · DB 마이그레이션 · monotonic 시간축
+
+현재 공통 스키마는 `shared/telemetry_protocol.py`의 59필드, schema_version=8, software_version=7.1.0이다. 아래 32필드와 적분 예시는 이전 구현 기록이다. 현재 V/I는 원본 부호/보정을 한 번 적용한 `discharge_positive`이며, 유효한 같은 응답의 간격만 사다리꼴 적분한다. [새 필드·부호·품질·마이그레이션](20-polarity-and-validation.md).
 
 ---
 
@@ -48,7 +50,7 @@ if 0 < dt_h < 0.01:                      # 36초 이상 간격은 무시(재시�
     usage["used_ah"] += current * dt_h   # 방전 양수 / 회생 음수 → 순소비
     usage["used_wh"] += power_w * dt_h
 ```
-- 회생제동은 전류가 음수라 **자동으로 차감**된다 (별도 처리 불필요)
+- 변환 후 충전·회생 전류는 음수여서 차감된다. 원본 CAN 전류의 부호와는 다를 수 있다.
 - 전비 = 거리 ÷ `used_ah` (km/Ah), `used_wh` ÷ 거리 (Wh/km)
 
 ### 20-4. DB 마이그레이션 (기존 데이터 보존)

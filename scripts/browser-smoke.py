@@ -81,6 +81,7 @@ def main():
                 battery_epoch="qa-pack",
                 boot="qa-boot",
                 time_trusted=lambda: True,
+                current_sign=1,
             )
             runtime.run.update(used_wh=280, distance_km=17.1, lap_count=12)
             runtime.configure(
@@ -94,13 +95,20 @@ def main():
                 )
             )
             runtime.run["laps"] = [
-                dict(seconds=55, wh=31.8, complete=True, formation=False)
+                dict(
+                    seconds=55,
+                    wh=31.8,
+                    complete=True,
+                    formation=False,
+                    energy_complete=True,
+                    energy_revision=0,
+                )
             ]
             runtime.driver(
                 "driver1", dict(mode="base", brightness=1, contrast="normal")
             )
             runtime.set_phase("RACE")
-            fixture = dict(speed=42, danger=False)
+            fixture = dict(speed=42, danger=False, current=14)
             vehicle.RUNTIME, vehicle.STOP = runtime, stop
             vehicle.UPLOAD_TOKEN, vehicle.UPLOAD_ENABLED = "qa-local-only", True
             vehicle.SERVER_WS_URL = pit_url.replace("http:", "ws:") + "/ingest"
@@ -122,7 +130,7 @@ def main():
                     runtime.update_bms(
                         dict(
                             voltage=50,
-                            current=14,
+                            current=fixture["current"],
                             soc=76,
                             temp_max=34,
                             temp_min=31,
@@ -171,6 +179,27 @@ def main():
                 page.wait_for_function(
                     "document.documentElement.dataset.contrast==='high'"
                 )
+                anchor = runtime.run["profile"]["budget_reference_wh"]
+                page.locator("#currentSign").select_option("-1")
+                with page.expect_request(
+                    lambda req: (
+                        req.url.endswith("/api/control") and req.method == "POST"
+                    )
+                ) as submitted:
+                    page.locator("#saveProfile").click()
+                assert submitted.value.post_data_json["profile"] == {"current_sign": -1}
+                fixture["current"] = -14
+                page.wait_for_function(
+                    "document.querySelector('#error').textContent==='저장했습니다'"
+                )
+                page.wait_for_function(
+                    "document.querySelector('#pitValues').textContent.includes('원본 -14.0 × -1')"
+                )
+                assert runtime.run["profile"]["budget_reference_wh"] == anchor
+                assert runtime.snapshot()["current"] == 14
+                assert runtime.snapshot()["energy_quality"] == "unverified_basis"
+                assert runtime.snapshot()["budget"]["target_wh_lap"] is None
+                page.screenshot(path=str(qa / "driver-polarity.png"))
                 page.locator("#close").click()
                 assert (
                     page.locator('[data-mode="endurance"]').get_attribute(
@@ -243,6 +272,7 @@ def main():
                         checks=[
                             "base/endurance/pit",
                             "same-driver settings",
+                            "polarity UI and unchanged budget anchor",
                             "contrast",
                             "phase timer",
                             "BMS danger",
@@ -251,7 +281,7 @@ def main():
                             "SSE/network watchdog",
                             "legacy UI",
                         ],
-                        screenshots=7,
+                        screenshots=8,
                     )
                 )
             )

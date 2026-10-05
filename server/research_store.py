@@ -136,7 +136,7 @@ class ResearchStore:
                         "SELECT payload FROM records_v7 WHERE id=?",
                         (record["sample_id"],),
                     ).fetchone()
-                    if old and old[0] != encoded:
+                    if old and normalize_sample(json.loads(old[0])) != record:
                         raise ValueError("sample id reused with different data")
                     cursor = db.execute(
                         "INSERT OR IGNORE INTO records_v7 VALUES(?,?,?,?,?,?)",
@@ -381,14 +381,37 @@ class ResearchStore:
             )
         )
         measured_seconds = sum(max(v) - min(v) for v in segments.values() if v)
+        energy_records = [
+            r for r in records if r.get("energy_increment_wh") is not None
+        ]
+        bases = sorted(
+            set(r.get("current_convention") or "legacy_unknown" for r in energy_records)
+        )
+        unverified = any(
+            r.get("energy_quality") == "unverified_basis" for r in energy_records
+        )
         return dict(
             vehicle=vehicle,
             race_session_id=race,
             aliases=aliases,
             points=len(records),
             measured_segment_seconds=measured_seconds,
-            measured_increment_wh=sum(
-                r.get("energy_increment_wh") or 0 for r in records
+            measured_increment_wh=sum(r["energy_increment_wh"] for r in energy_records)
+            if energy_records
+            else None,
+            energy_basis="unverified"
+            if unverified or bases != ["discharge_positive"]
+            else "discharge_positive",
+            energy_conventions=bases,
+            energy_quality=records[-1].get("energy_quality", "legacy_unknown")
+            if records
+            else "waiting",
+            energy_revisions=sorted(
+                set(
+                    r["energy_revision"]
+                    for r in records
+                    if r.get("energy_revision") is not None
+                )
             ),
             latest_used_wh=records[-1].get("used_wh") if records else None,
             sample_count=len(records),

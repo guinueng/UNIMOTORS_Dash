@@ -1078,20 +1078,30 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 """
 
 
-def replay_input(path, rate):
+def replay_input(path, rate, current_sign=None):
     records, rejected = parse_csv(Path(path).read_text(encoding="utf-8-sig"))
     if rejected:
         raise ValueError("replay CSV has rejected rows")
+    if current_sign is not None and any(
+        r.get("current_convention") == "discharge_positive" for r in records
+    ):
+        raise ValueError(
+            "stored canonical CSV must be replayed without --replay-current-sign"
+        )
     for record in records:
         if STOP.is_set():
             break
         RUNTIME.update_gps(dict(record, fix=bool(record.get("fix"))))
+        # Stored samples already use the canonical convention. Legacy CSV is
+        # treated as stored canonical values unless an explicit native sign is given.
+        canonical = current_sign is None
         RUNTIME.update_bms(
             {
                 k: record[k]
                 for k in ("voltage", "current", "soc", "temp_max", "temp_min")
                 if record.get(k) is not None
-            }
+            },
+            canonical=canonical,
         )
         STOP.wait(rate)
     RUNTIME.event("replay_complete", {"records": len(records)})
@@ -1102,6 +1112,12 @@ def main():
     parser = argparse.ArgumentParser(description="UNIMOTORS v7 local cluster")
     parser.add_argument("--replay", help="CSV replay; upload disabled")
     parser.add_argument("--replay-interval", type=float, default=0.2)
+    parser.add_argument(
+        "--replay-current-sign",
+        type=int,
+        choices=(-1, 1),
+        help="interpret legacy CSV current as native (-1 or +1); default: stored canonical current",
+    )
     parser.add_argument("--bind", default="0.0.0.0")
     args = parser.parse_args()
     REPLAY = bool(args.replay)
@@ -1116,6 +1132,9 @@ def main():
         battery_epoch=os.environ.get("UNIMOTORS_BATTERY_EPOCH"),
         resume_window=float(os.environ.get("UNIMOTORS_RESUME_SECONDS", "300")),
         persist_interval=float(os.environ.get("UNIMOTORS_PERSIST_SECONDS", "1")),
+        current_sign=args.replay_current_sign
+        if REPLAY and args.replay_current_sign is not None
+        else None,
     )
     SESSION_ID = RUNTIME.segment
     RUNTIME.replay = REPLAY
@@ -1131,7 +1150,20 @@ def main():
 
     start(csv_logger)
     if REPLAY:
-        start(replay_input, (args.replay, args.replay_interval))
+        if args.replay_current_sign is not None:
+            RUNTIME.configure({"current_sign": args.replay_current_sign})
+        RUNTIME.event(
+            "replay_basis",
+            {
+                "current": "stored_canonical"
+                if args.replay_current_sign is None
+                else "native",
+                "current_sign": args.replay_current_sign,
+            },
+        )
+        start(
+            replay_input, (args.replay, args.replay_interval, args.replay_current_sign)
+        )
     else:
         start(raw_logger)
         start(gps_reader)

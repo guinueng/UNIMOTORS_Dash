@@ -1472,6 +1472,8 @@ async function loadCumulative(vehicle){
   $("aStat").innerHTML=`<b>${j.name}</b> 전체 누적`
     +((s.first&&s.last)?`<br>${s.first} ~ ${s.last}`:"")
     +`<br><span style="color:var(--dimmer)">· ${s.points}샘플</span>`;
+  const energyNames={measured_increments:'고유 표본 순증가량',mixed_legacy_excluded:'구 기록 제외 · 순증가량',legacy_unverified:'구 기록 부호 미확정',unverified:'부호/보정 기준 미확정'};
+  $("aStat").append(document.createElement('br'),document.createTextNode('소비 기준: '+(energyNames[s.energy_basis]||'미확정')+(s.energy_partial?' · 일부 미계측':'')));
   // 누적 모드: 세션 전용 UI 숨김
   ["scrubBox","colorBox","axisBox","lapBox","secCmp","cmpBox","secAlt","boxAlt","secBatt",
    "boxSoc","boxUsed","boxVolt","boxCur","boxPow"].forEach(id=>$(id).style.display="none");

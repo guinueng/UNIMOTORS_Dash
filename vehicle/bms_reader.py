@@ -27,7 +27,7 @@ PRIORITY = 0x18
 ADDR_BMS = 0x01
 ADDR_PC = 0x40
 
-CURRENT_OFFSET = 30000  # 0x90 전류: (raw - 30000) * 0.1 A  (음수 = 회생/충전)
+CURRENT_OFFSET = 30000  # Native protocol current; polarity configured at runtime.
 TEMP_OFFSET = 40  # 0x92/0x96 온도: raw - 40 = ℃
 
 RATED_CAPACITY_AH = 80.0  # 팩 정격 용량 (실측: SOC50% 잔여 40Ah 확인)
@@ -170,7 +170,7 @@ class BMSReader:
 
     # -- 개별 파서 --------------------------------------------------------
     def read_soc_vi(self):
-        """0x90: 총전압/전류/SOC. current<0 이면 회생(충전)."""
+        """0x90: native V/I and SOC. Polarity is normalized by RaceRuntime."""
         f = self._request(DID_SOC_VI)
         if not f:
             return None
@@ -182,8 +182,6 @@ class BMSReader:
             "voltage": round(voltage, 1),
             "current": round(current, 1),
             "soc": round(soc, 1),
-            "power_w": round(voltage * current, 1),  # 음수면 회생 전력
-            "regen": current < 0,
         }
 
     def read_cell_minmax(self):
