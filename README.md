@@ -15,7 +15,7 @@ KSAE 대회용 자작 전기차(UNIMOTORS)에 올린 실동작 시스템의 코�
 
 짧은 재시동의 경기 기록 복원, 센서별 최신성·미계측 처리, 누적 Wh/랩 예산, 기본·내구·정비 화면, 기한 있는 TEAM 오더와 경기 요약을 추가했다. 로컬 미전송 큐와 서버 커밋 뒤 ACK로 재전송의 중복 집계를 방지한다.
 
-[개선 내용·설정·검증·제한](docs/19-cluster-research.md) · [업데이트된 마스터](docs/MASTER.md). 차량 화면은 `/`, 이전 화면 `/legacy`, 피트 경기 관제 `/research`다. 새 코드의 실차 배포·검교정·물리 전원 차단 시험은 아직 수행하지 않았다.
+[GitHub PR #1](https://github.com/guinueng/UNIMOTORS_Dash/pull/1) · [개선 내용·설정·검증·제한](docs/19-cluster-research.md) · [업데이트된 마스터](docs/MASTER.md). 차량 화면은 `/`, 이전 화면 `/legacy`, 피트 경기 관제 `/research`다. 새 코드의 실차 배포·검교정·물리 전원 차단 시험은 아직 수행하지 않았다.
 
 ![새 운전자 기본 화면 — 합성 입력](docs/images/cluster-v7-base.png)
 

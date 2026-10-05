@@ -2919,8 +2919,6 @@ IV부=초기 설정 총정리, V부=트러블슈팅, 부록=명령·경로·백�
 
 ---
 
----
-
 <!-- UNIMOTORS_CLUSTER_V7_BEGIN -->
 
 # 31. 클러스터 졸업연구 개선 구현 — V7 / 2026-10-06
@@ -3135,4 +3133,10 @@ python vehicle/gps_server.py --replay path/to/telem.csv --bind 127.0.0.1 --repla
 
 ## 31-10. 발행 기록
 
-발행 브랜치: `codex/cluster-recovery-research`. GitHub 업로드 및 PR 검증 결과는 이 항목에 추가한다.
+발행 브랜치: `codex/cluster-recovery-research`. [GitHub PR #1](https://github.com/guinueng/UNIMOTORS_Dash/pull/1)에 코드·문서·4개 합성 화면 캡처를 업로드했다. main에 병합하거나 실제 차량에 배포하지 않았다.
+
+구현 커밋: `7abc46a6c872dc316f3f04d72628eb94e608f910`. GitHub의 파일 트리 `42bc0d5a5a9d3a31b2d9585fa4147c84e2326452`가 로컬에서 검증한 커밋의 트리와 정확히 일치함을 확인했다. 로컬 Git의 인증 실패를 연결된 GitHub 앱으로 해결했으며 로컬 브랜치도 원격 커밋과 동기화했다.
+
+[GitHub Actions 실행 37352379446](https://github.com/guinueng/UNIMOTORS_Dash/actions/runs/37352379446)에서 unit-integration(Python 3.11/3.12)과 browser 모두 success를 확인했다. 로컬에서는 34개 시험·Ruff F·Bash 문법·Chromium 화면 검사가 통과했다. 이 기록 이후의 문서 마무리 커밋에도 동일 CI가 실행된다.
+
+기존 로컬 V5 마스터의 본문은 보존하고 이 V7 장을 추가했다. 원래 계기판 폴더의 10개 소스·공통 파일·HTML을 같은 버전으로 동기화했고 이전 소스는 별도 백업했다. 기존 규정·포스터·글로벌 조사 PDF/사진 원본은 연구 자료로 유지한다.
