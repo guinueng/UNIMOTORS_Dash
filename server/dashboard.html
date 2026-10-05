@@ -145,6 +145,31 @@
   .dbtn.go{background:var(--red);color:#fff;border-color:var(--red);font-weight:600}
   .dbtn:disabled{opacity:.4;cursor:not-allowed}
   .dbtn:disabled:hover{background:transparent}
+  /* 삭제 섹션: 기본 접힘 토글 */
+  #delBox{margin-top:6px}
+  .dtoggle{width:100%;padding:8px 10px;background:transparent;color:var(--dimmer);
+    border:1px dashed var(--line);border-radius:6px;font-size:11px;font-family:var(--mono);
+    cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px;
+    letter-spacing:.06em}
+  .dtoggle:hover{color:var(--red);border-color:rgba(255,77,77,.4)}
+  .dtoggle .caret{transition:transform .15s}
+  .dtoggle.open{color:var(--red);border-style:solid;border-color:rgba(255,77,77,.4)}
+  .dtoggle.open .caret{transform:rotate(180deg)}
+  /* 삭제 2차 확인 모달 */
+  #delModal{position:fixed;inset:0;z-index:2000;background:rgba(6,8,11,.78);
+    backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:20px}
+  #delModal.show{display:flex}
+  .dmodal{width:100%;max-width:420px;background:var(--panel);
+    border:1px solid rgba(255,77,77,.45);border-radius:10px;padding:20px;
+    box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .dmodal h3{font-size:13px;color:var(--red);letter-spacing:.14em;text-transform:uppercase;
+    margin-bottom:12px;font-weight:600}
+  .dmodal .mwarn{font-size:11.5px;color:var(--dim);line-height:1.75;margin-bottom:12px;
+    padding:10px 12px;background:rgba(255,77,77,.07);border-radius:6px;
+    border-left:2px solid var(--red)}
+  .dmodal .mwarn b{color:var(--red)}
+  .dmrow{display:flex;gap:8px;margin-top:12px}
+  .dmrow .dbtn{margin-top:0}
   @media(max-width:820px){
     .rail{width:150px;padding:8px;gap:8px}.speedblk .val{font-size:52px}
     .metric .v{font-size:17px}.gg{width:110px;height:110px}.arail{width:210px}
@@ -153,6 +178,7 @@
 </head>
 <body>
 <header>
+  <a href="/research" style="color:var(--cyan);font-size:12px;text-decoration:none">경기 관제·연구</a>
   <div class="brand"><b>UNIMOTORS</b> TELEMETRY</div>
   <div class="tabs">
     <button class="tab active" data-view="live">실시간</button>
@@ -309,33 +335,6 @@
         <div id="lapWrap" style="margin-top:8px"></div>
       </div>
 
-      <!-- 데이터 삭제 (이중 확인) -->
-      <div id="delBox" style="display:none">
-        <div class="sect">데이터 삭제</div>
-        <div class="danger">
-          <h5>⚠ 위험 구역</h5>
-          <div class="warn">삭제한 주행 데이터는 <b style="color:var(--red)">복구할 수 없습니다.</b>
-            차량 로컬의 CSV가 남아 있으면 backfill로 다시 올릴 수 있습니다.</div>
-          <button class="dbtn" id="delSess">선택한 주행 삭제</button>
-          <button class="dbtn" id="delVeh">이 차량 전체 삭제</button>
-          <!-- 2차 확인 패널 -->
-          <div id="delConfirm" style="display:none;margin-top:10px;padding-top:10px;
-            border-top:1px solid rgba(255,77,77,.3)">
-            <div id="delTarget" style="font-family:var(--mono);font-size:11px;
-              color:var(--txt);line-height:1.7;margin-bottom:8px"></div>
-            <div style="font-size:11px;color:var(--dim);margin-bottom:5px">
-              확인을 위해 <b id="delWord" style="color:var(--red);font-family:var(--mono)"></b>
-              를 그대로 입력하세요</div>
-            <input id="delVerify" class="miniin" style="width:100%;padding:6px"
-              autocomplete="off" placeholder="여기에 입력">
-            <button class="dbtn go" id="delGo" disabled>영구 삭제 실행</button>
-            <button class="dbtn" id="delCancel">취소</button>
-          </div>
-          <div id="delResult" style="font-family:var(--mono);font-size:11px;
-            color:var(--green);margin-top:8px"></div>
-        </div>
-      </div>
-
       <div class="sect" id="secSpeed">속도</div>
       <div class="chartbox" id="boxSpeed"><h4>Speed km/h</h4><canvas class="chart" id="chSpeed"></canvas></div>
       <div class="sect" id="secG">G-Force</div>
@@ -369,9 +368,53 @@
         <div class="chartbox"><h4 id="cmpTitle">비교</h4>
           <canvas class="chart" id="chCmp" style="height:110px"></canvas></div>
       </div>
+
+      <!-- ===== 데이터 삭제 : 사이드바 최하단 · 기본 접힘 · 모달 확인 ===== -->
+      <div id="delBox" style="display:none">
+        <div class="sect">데이터 삭제</div>
+        <button class="dtoggle" id="delToggle" type="button"
+                aria-expanded="false" aria-controls="delPanel">
+          <span id="delToggleLbl">⚠ 삭제 도구 열기</span><span class="caret">▾</span>
+        </button>
+        <div id="delPanel" style="display:none;margin-top:8px">
+          <div class="danger">
+            <h5>⚠ 위험 구역</h5>
+            <div class="warn">삭제한 주행 데이터는 <b style="color:var(--red)">복구할 수 없습니다.</b>
+              차량 로컬의 CSV가 남아 있으면 backfill로 다시 올릴 수 있습니다.</div>
+            <button class="dbtn" id="delSess">선택한 주행 삭제</button>
+            <button class="dbtn" id="delVeh">이 차량 전체 삭제</button>
+            <div id="delResult" style="font-family:var(--mono);font-size:11px;
+              color:var(--green);margin-top:8px"></div>
+          </div>
+        </div>
+      </div>
     </aside>
   </section>
 </main>
+
+<!-- ===== 삭제 2차 확인 모달 (body 직속 · 사이드바 스크롤에 잘리지 않음) ===== -->
+<div id="delModal" role="dialog" aria-modal="true" aria-labelledby="delModalTitle">
+  <div class="dmodal">
+    <h3 id="delModalTitle">⚠ 영구 삭제 확인</h3>
+    <div class="mwarn">
+      이 작업은 <b>되돌릴 수 없습니다.</b> 서버 DB에서 해당 행이 즉시 제거됩니다.<br>
+      차량 로컬에 telem CSV가 남아 있다면 backfill로 다시 올릴 수 있습니다.
+    </div>
+    <div id="delTarget" style="font-family:var(--mono);font-size:11.5px;
+      color:var(--txt);line-height:1.8;margin-bottom:12px"></div>
+    <div style="font-size:11.5px;color:var(--dim);margin-bottom:6px">
+      확인을 위해 <b id="delWord" style="color:var(--red);font-family:var(--mono)"></b>
+      를 그대로 입력하세요</div>
+    <input id="delVerify" class="miniin" style="width:100%;padding:8px"
+      autocomplete="off" placeholder="여기에 입력">
+    <div class="dmrow">
+      <button class="dbtn" id="delCancel" style="flex:1">취소</button>
+      <button class="dbtn go" id="delGo" style="flex:1" disabled>영구 삭제 실행</button>
+    </div>
+    <div id="delModalMsg" style="font-family:var(--mono);font-size:11px;
+      color:var(--red);margin-top:8px"></div>
+  </div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
        ></script>
@@ -732,6 +775,7 @@ function drawSession(rows,srcNote){
   wireCharts();
   $("lapBox").style.display=(rows.length&&sessKind==="drive")?"block":"none";
   $("delBox").style.display=rows.length?"block":"none";
+  delReset();                       // 세션이 바뀌면 삭제 패널은 다시 접힌 상태로
   selLap=-1;
   if(sessKind==="drive"){ drawStartLine(); renderLaps(); } else { $("lapWrap").innerHTML=""; }
 
@@ -1279,12 +1323,50 @@ $("slWidth").onchange=()=>{ if(startLine){startLine.width=+$("slWidth").value||4
   drawStartLine(); renderLaps(); saveStartLine();} };
 $("minLap").onchange=$("minSpd").onchange=$("minAway").onchange=()=>renderLaps();
 
-/* ===================== 데이터 삭제 (이중 확인) ===================== */
+/* ===================== 데이터 삭제 (접이식 + 모달 2차 확인) =====================
+   · 사이드바 최하단에 배치. 기본은 접혀 있어 실수로 누르기 어렵다.
+   · 1차: 토글을 펼쳐야 삭제 버튼이 보인다.
+   · 2차: 별도 모달에서 대상/행수 확인 + 이름 그대로 입력해야 실행 버튼이 열린다. */
 let delMode=null;      // "session" | "vehicle"
-function delReset(){
-  delMode=null; $("delConfirm").style.display="none";
-  $("delVerify").value=""; $("delGo").disabled=true;
+
+/* --- 1차: 접이식 토글 --- */
+function delCollapse(){
+  $("delPanel").style.display="none";
+  $("delToggle").classList.remove("open");
+  $("delToggle").setAttribute("aria-expanded","false");
+  $("delToggleLbl").textContent="⚠ 삭제 도구 열기";
 }
+function delExpand(){
+  $("delPanel").style.display="block";
+  $("delToggle").classList.add("open");
+  $("delToggle").setAttribute("aria-expanded","true");
+  $("delToggleLbl").textContent="⚠ 삭제 도구 닫기";
+}
+$("delToggle").onclick=()=>{
+  if($("delPanel").style.display==="none"){ delExpand(); }
+  else { closeDelModal(); delCollapse(); $("delResult").textContent=""; }
+};
+
+/* --- 2차: 모달 --- */
+function closeDelModal(){
+  $("delModal").classList.remove("show");
+  delMode=null;
+  $("delVerify").value=""; $("delGo").disabled=true;
+  $("delGo").textContent="영구 삭제 실행";
+  $("delModalMsg").textContent="";
+}
+/* 세션 전환 등에서 삭제 UI 전체 초기화 */
+function delReset(){
+  closeDelModal(); delCollapse(); $("delResult").textContent="";
+}
+$("delCancel").onclick=closeDelModal;
+// 배경(백드롭) 클릭으로 닫기 — 모달 본문 클릭은 무시
+$("delModal").onclick=e=>{ if(e.target===$("delModal")) closeDelModal(); };
+// ESC 로 닫기
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("delModal").classList.contains("show")) closeDelModal();
+});
+
 async function delStart(mode){
   const vehicle=$("aVeh").value;
   const sel=$("aSess").value||"";
@@ -1308,20 +1390,23 @@ async function delStart(mode){
        실시간 ${p.summary}행 + 정밀궤적 ${p.track}행 = <b>${p.total}행</b>`;
   $("delWord").textContent=word;
   $("delVerify").value=""; $("delGo").disabled=true;
-  $("delConfirm").style.display="block";
-  $("delResult").textContent="";
-  $("delVerify").focus();
+  $("delGo").textContent="영구 삭제 실행";
+  $("delModalMsg").textContent=""; $("delResult").textContent="";
+  $("delModal").classList.add("show");
+  setTimeout(()=>$("delVerify").focus(),50);
 }
 $("delSess").onclick=()=>delStart("session");
 $("delVeh").onclick=()=>delStart("vehicle");
-$("delCancel").onclick=delReset;
 $("delVerify").oninput=e=>{ $("delGo").disabled = e.target.value !== $("delWord").textContent; };
+// 입력칸에서 Enter = 실행 (활성화된 경우에만)
+$("delVerify").onkeydown=e=>{ if(e.key==="Enter"&&!$("delGo").disabled) $("delGo").click(); };
 $("delGo").onclick=async()=>{
   const vehicle=$("aVeh").value;
   const sel=$("aSess").value||"";
   const sess=delMode==="session"
     ? (sel.startsWith("sess:")?sel.slice(5):sel.slice(6)) : null;
   $("delGo").disabled=true; $("delGo").textContent="삭제 중…";
+  $("delModalMsg").textContent="";
   try{
     const r=await fetch("/api/delete",{method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -1329,22 +1414,23 @@ $("delGo").onclick=async()=>{
                            verify:$("delVerify").value})});
     const j=await r.json();
     if(r.ok){
+      closeDelModal();                 // 모달만 닫고 패널은 열어둔 채 결과 표시
       $("delResult").style.color="var(--green)";
       $("delResult").textContent=`삭제 완료: ${j.total}행 (실시간 ${j.deleted_summary} / 궤적 ${j.deleted_track})`;
-      delReset();
-      sessRows=[]; laps=[]; selLap=-1; startLine=startLine; clearCharts();
+      sessRows=[]; laps=[]; selLap=-1; clearCharts();
       clearTrackLayers(); $("aStat").textContent="삭제되었습니다.";
       ["scrubBox","colorBox","axisBox","lapBox","secCmp","cmpBox"].forEach(id=>$(id).style.display="none");
       await loadSessions(vehicle);
     } else {
-      $("delResult").style.color="var(--red)";
-      $("delResult").textContent="실패: "+(j.error||r.status);
+      $("delModalMsg").textContent="실패: "+(j.error||r.status);
+      $("delGo").textContent="영구 삭제 실행";
+      $("delGo").disabled = $("delVerify").value !== $("delWord").textContent;
     }
   }catch(e){
-    $("delResult").style.color="var(--red)";
-    $("delResult").textContent="실패: "+e;
+    $("delModalMsg").textContent="실패: "+e;
+    $("delGo").textContent="영구 삭제 실행";
+    $("delGo").disabled = $("delVerify").value !== $("delWord").textContent;
   }
-  $("delGo").textContent="영구 삭제 실행";
 };
 
 function updateScrub(i){
@@ -1386,6 +1472,8 @@ async function loadCumulative(vehicle){
   $("aStat").innerHTML=`<b>${j.name}</b> 전체 누적`
     +((s.first&&s.last)?`<br>${s.first} ~ ${s.last}`:"")
     +`<br><span style="color:var(--dimmer)">· ${s.points}샘플</span>`;
+  const energyNames={measured_increments:'고유 표본 순증가량',mixed_legacy_excluded:'구 기록 제외 · 순증가량',legacy_unverified:'구 기록 부호 미확정',unverified:'부호/보정 기준 미확정'};
+  $("aStat").append(document.createElement('br'),document.createTextNode('소비 기준: '+(energyNames[s.energy_basis]||'미확정')+(s.energy_partial?' · 일부 미계측':'')));
   // 누적 모드: 세션 전용 UI 숨김
   ["scrubBox","colorBox","axisBox","lapBox","secCmp","cmpBox","secAlt","boxAlt","secBatt",
    "boxSoc","boxUsed","boxVolt","boxCur","boxPow"].forEach(id=>$(id).style.display="none");

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""UNIMOTORS 디지털 계기판 + 10Hz raw GPS 로거 + 텔레메트리 (v6).
+"""UNIMOTORS v7 클러스터 + 로컬 기록 + durable telemetry.
+
+v7: restart continuity, freshness, local race state and ACK-backed delivery.
+See docs/19-cluster-research.md; the following v6 notes describe inherited features.
 
 v5 대비 변경점:
   - GPS 위경도(lat/lon) 추출 추가 (GGA) -> 지도/궤적/서버 전송에 사용
@@ -10,7 +13,7 @@ v5 대비 변경점:
 
 설계 철학(계승): 차량 Pi는 '빨리 읽고 그대로 저장/전송'. 무거운 분석은 서버에서.
   - 10Hz raw NMEA: 로컬 SD 원본 (정밀 궤적/랩분석용, 주행후 업로드)
-  - 1Hz telem CSV: GPS+BMS 요약 (백업/보정)
+  - 기본 5Hz telem CSV: GPS+BMS 요약 (백업/보정)
   - NHz 계기판 표시: 폰/LCD (SSE)
   - NHz 서버 push: WS로 서버 (실시간 대시보드)
 
@@ -18,22 +21,40 @@ v5 대비 변경점:
         bms_reader.py 동일 폴더.
         websocket-client 설치: pip3 install websocket-client --break-system-packages
 """
+
 import glob
+import argparse
+import csv
+import hmac
 import json
 import math
+import queue
 import os
 import sys
 import threading
 import time
-from collections import deque
+from pathlib import Path
+from urllib.parse import urlsplit
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import serial
+try:
+    import serial
+except ImportError:
+    serial = None
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shared"))
+from telemetry_protocol import FIELDS as V7_FIELDS, parse_csv, VERSION
+from race_runtime import RaceRuntime
+
+RUNTIME = None
+STOP = threading.Event()
+REPLAY = False
+RAW_QUEUE = queue.Queue(maxsize=5000)
 
 # BMS 모듈 (없거나 python-can 미설치여도 계기판은 떠야 하므로 안전 임포트)
 try:
     from bms_reader import BMSReader
+
     BMS_AVAILABLE = True
 except Exception as _e:
     BMS_AVAILABLE = False
@@ -42,6 +63,7 @@ except Exception as _e:
 # WebSocket 클라이언트 (없어도 계기판/로컬은 동작. 전송만 비활성)
 try:
     import websocket  # websocket-client 패키지
+
     WS_AVAILABLE = True
 except Exception as _we:
     WS_AVAILABLE = False
@@ -56,45 +78,53 @@ except Exception as _we:
 PRESETS = {
     # 레이싱카: BMS 있음, 서버 전송, 계기판
     "car1": {
-        "VEHICLE_ID": "car1", "BMS_ENABLED": True,
-        "UPLOAD_ENABLED": True, "GPS_PORT": "/dev/ttyUSB1",
+        "VEHICLE_ID": "car1",
+        "BMS_ENABLED": True,
+        "UPLOAD_ENABLED": True,
+        "GPS_PORT": "/dev/ttyUSB1",
     },
     # 개인차(스타렉스): BMS 없음, 서버 전송 O, 계기판+로깅
     "starex": {
-        "VEHICLE_ID": "starex", "BMS_ENABLED": False,
-        "UPLOAD_ENABLED": True, "GPS_PORT": "/dev/ttyUSB1",
+        "VEHICLE_ID": "starex",
+        "BMS_ENABLED": False,
+        "UPLOAD_ENABLED": True,
+        "GPS_PORT": "/dev/ttyUSB1",
     },
     # 개인차 예비(다른 차 추가용 템플릿)
     "car_personal2": {
-        "VEHICLE_ID": "car_personal2", "BMS_ENABLED": False,
-        "UPLOAD_ENABLED": True, "GPS_PORT": "/dev/ttyUSB1",
+        "VEHICLE_ID": "car_personal2",
+        "BMS_ENABLED": False,
+        "UPLOAD_ENABLED": True,
+        "GPS_PORT": "/dev/ttyUSB1",
     },
     # 순수 로컬 로거(서버 전송 안 함, BMS 없음) — 프라이버시/오프라인
     "local_only": {
-        "VEHICLE_ID": "local", "BMS_ENABLED": False,
-        "UPLOAD_ENABLED": False, "GPS_PORT": "/dev/ttyUSB1",
+        "VEHICLE_ID": "local",
+        "BMS_ENABLED": False,
+        "UPLOAD_ENABLED": False,
+        "GPS_PORT": "/dev/ttyUSB1",
     },
 }
 # ★ 이 기기가 무슨 차인지 여기서 선택 (또는 환경변수 UNIMOTORS_PRESET)
 PRESET = os.environ.get("UNIMOTORS_PRESET", "car1")
 _P = PRESETS.get(PRESET, PRESETS["car1"])
 
-PORT = 8080
-GPS_PORT = _P["GPS_PORT"]      # 3B+ 이관 후 ls /dev/ttyUSB* 로 재확인 필요
+PORT = int(os.environ.get("UNIMOTORS_VEHICLE_PORT", "8080"))
+GPS_PORT = _P["GPS_PORT"]  # 3B+ 이관 후 ls /dev/ttyUSB* 로 재확인 필요
 GPS_BAUD = 115200
 
 CAN_CHANNEL = "can0"
 BMS_ENABLED = _P["BMS_ENABLED"]
 
-LOG_DIR = "/home/unimotors/gps_logs"
+LOG_DIR = os.environ.get("UNIMOTORS_LOG_DIR", "/home/unimotors/gps_logs")
 KEEP_FILES = 3
 FLUSH_INTERVAL = 1.0
 
 # --- 표시/전송 레이트 (초 단위 주기) ---
 # Zero W: 1.0 권장. 3B+/4B: 0.1~0.2 로 낮춰 부드러운 계기판.
-DISPLAY_RATE   = 1.0          # 계기판 state 갱신 주기
-SSE_RATE       = 0.5          # SSE 폰 전송 주기 (2Hz)
-UPLOAD_RATE    = 0.5          # 서버 WS push 주기 (2Hz). 상수로 조정.
+DISPLAY_RATE = float(os.environ.get("UNIMOTORS_DISPLAY_RATE", "0.1"))
+SSE_RATE = float(os.environ.get("UNIMOTORS_SSE_RATE", "0.2"))
+UPLOAD_RATE = 0.5  # 서버 WS push 주기 (2Hz). 상수로 조정.
 
 SPEED_CUTOFF = 2.0
 HEADING_MIN_SPEED = 5.0
@@ -108,43 +138,68 @@ SPEED_WINDOW = 3
 #              NAT 없이 쓰면 폰이 모든 트래픽을 WiFi로 보내 인터넷이 끊긴다.
 #  "off"     : 캡티브 경로 응답 안 함(404)
 CAPTIVE_MODE = "portal"
-CAPTIVE_REDIRECT = "http://10.42.0.1:8080/"   # portal 모드에서 안내할 주소
+CAPTIVE_REDIRECT = "http://10.42.0.1:8080/"  # portal 모드에서 안내할 주소
 
 # --- BMS 폴링 주기 ---
-BMS_FAST_INTERVAL  = 0.33
-BMS_SLOW_INTERVAL  = 1.0
+BMS_FAST_INTERVAL = 0.33
+BMS_SLOW_INTERVAL = 1.0
 BMS_ALARM_INTERVAL = 0.5
 
 # --- 텔레메트리 로컬 CSV ---
 # ★ 중요: 이 telem CSV 가 backfill.py 로 서버에 올라가 'track'(정밀 궤적)이 된다.
 #   즉 서버 궤적 해상도 = TELEM_LOG_RATE.  (gps_*.csv 의 10Hz raw NMEA 는 업로드 안 됨)
 #   1.0 = 1Hz (기본, 가벼움) / 0.2 = 5Hz / 0.1 = 10Hz (정밀 분석용, SD 쓰기 10배)
-TELEM_ENABLED   = True
-TELEM_LOG_RATE  = 1.0
-TELEM_FLUSH     = 2.0
+TELEM_ENABLED = True
+TELEM_LOG_RATE = float(os.environ.get("UNIMOTORS_SAMPLE_RATE", "0.2"))
+TELEM_FLUSH = 2.0
 
 # --- 서버 전송 (WebSocket, VPN 내부) ---
-UPLOAD_ENABLED  = _P["UPLOAD_ENABLED"]
-SERVER_WS_URL   = "ws://10.10.0.9:8090/ingest"   # 기숙사 Pi4 서버 (VPN IP)
-UPLOAD_TOKEN    = os.environ.get("UNIMOTORS_TOKEN", "change-me")    # 간단 인증 토큰 (서버와 일치시킬 것)
-VEHICLE_ID      = _P["VEHICLE_ID"]                 # 다중 차량 식별자 (프리셋에서)
+UPLOAD_ENABLED = _P["UPLOAD_ENABLED"]
+SERVER_WS_URL = os.environ.get("UNIMOTORS_SERVER_WS", "ws://10.10.0.9:8090/ingest")
+UPLOAD_TOKEN = os.environ.get(
+    "UNIMOTORS_TOKEN", "change-me"
+)  # 간단 인증 토큰 (서버와 일치시킬 것)
+VEHICLE_ID = _P["VEHICLE_ID"]  # 다중 차량 식별자 (프리셋에서)
 
 # --- G-force 계산 ---
-G_ENABLED       = True
-G_ACCEL         = 9.80665     # 1G (m/s^2)
-G_MIN_SPEED     = 3.0         # km/h. 이 미만은 G 계산 안 함(저속 GPS 노이즈 방지)
+G_ENABLED = True
+G_ACCEL = 9.80665  # 1G (m/s^2)
+G_MIN_SPEED = 3.0  # km/h. 이 미만은 G 계산 안 함(저속 GPS 노이즈 방지)
 
 # CSV/전송 공통 스키마 (서버 테이블과 동일하게)
 TELEM_FIELDS = [
-    "ts", "vehicle", "session", "t_mono",            # t_mono: 시작 후 경과초(시계와 무관)
-    "lat", "lon", "alt", "speed", "heading", "sats", "fix", "hdop",
-    "g_lon", "g_lat",                                # G-force (종/횡)
-    "voltage", "current", "soc", "power_w", "regen",
-    "remain_ah", "range_km", "state",
-    "used_ah", "used_wh",                            # 이번 주행 누적 사용량
-    "temp_max", "temp_min",
-    "cell_v_max", "cell_v_min", "cell_v_diff",
-    "balancing", "alarm_level", "alarms",
+    "ts",
+    "vehicle",
+    "session",
+    "t_mono",  # t_mono: 시작 후 경과초(시계와 무관)
+    "lat",
+    "lon",
+    "alt",
+    "speed",
+    "heading",
+    "sats",
+    "fix",
+    "hdop",
+    "g_lon",
+    "g_lat",  # G-force (종/횡)
+    "voltage",
+    "current",
+    "soc",
+    "power_w",
+    "regen",
+    "remain_ah",
+    "range_km",
+    "state",
+    "used_ah",
+    "used_wh",  # 이번 주행 누적 사용량
+    "temp_max",
+    "temp_min",
+    "cell_v_max",
+    "cell_v_min",
+    "cell_v_diff",
+    "balancing",
+    "alarm_level",
+    "alarms",
 ]
 
 KST = timezone(timedelta(hours=9))
@@ -157,14 +212,14 @@ DEBUG = ("--debug" in sys.argv) or (os.environ.get("GPS_DEBUG") == "1")
 #  뻥튀기된다. -> 경과시간은 monotonic 으로 따로 기록하고(t_mono),
 #     점프를 감지하면 세션을 새로 끊어 오염 구간을 분리한다.
 # ============================================================
-T0_MONO = time.monotonic()          # 프로세스 시작 기준 (시계와 무관, 절대 뒤로 안 감)
-CLOCK_JUMP_SEC = 30.0               # 이 이상 어긋나면 시계 점프로 판단
+T0_MONO = time.monotonic()  # 프로세스 시작 기준 (시계와 무관, 절대 뒤로 안 감)
+CLOCK_JUMP_SEC = 30.0  # 이 이상 어긋나면 시계 점프로 판단
 SESSION_ID = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
 clock_state = {
-    "mono": T0_MONO,                # 마지막 점검 시 monotonic
-    "wall": time.time(),            # 마지막 점검 시 wall clock
-    "jumps": 0,                     # 점프 감지 횟수
-    "synced": False,                # 점프(=NTP/GPS 동기) 한 번이라도 있었나
+    "mono": T0_MONO,  # 마지막 점검 시 monotonic
+    "wall": time.time(),  # 마지막 점검 시 wall clock
+    "jumps": 0,  # 점프 감지 횟수
+    "synced": False,  # 점프(=NTP/GPS 동기) 한 번이라도 있었나
 }
 clock_lock = threading.Lock()
 
@@ -173,10 +228,11 @@ def check_clock_jump():
     """시계 점프 감지. 점프 시 세션 ID 를 새로 끊고 True 반환.
     monotonic 경과분과 wall clock 경과분을 비교해서 판단한다."""
     global SESSION_ID
-    now_m = time.monotonic(); now_w = time.time()
+    now_m = time.monotonic()
+    now_w = time.time()
     with clock_lock:
-        dm = now_m - clock_state["mono"]      # 실제 흐른 시간
-        dw = now_w - clock_state["wall"]      # 시계가 주장하는 시간
+        dm = now_m - clock_state["mono"]  # 실제 흐른 시간
+        dw = now_w - clock_state["wall"]  # 시계가 주장하는 시간
         clock_state["mono"] = now_m
         clock_state["wall"] = now_w
         if abs(dw - dm) > CLOCK_JUMP_SEC:
@@ -185,17 +241,32 @@ def check_clock_jump():
             new_sess = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
             old = SESSION_ID
             SESSION_ID = new_sess
-            print(f"[CLOCK] 시계 점프 감지 ({dw-dm:+.0f}s) -> 세션 분리 "
-                  f"{old} -> {new_sess}", flush=True)
+            print(
+                f"[CLOCK] 시계 점프 감지 ({dw - dm:+.0f}s) -> 세션 분리 "
+                f"{old} -> {new_sess}",
+                flush=True,
+            )
             return True
     return False
 
+
 # 계기판 state (SSE로 폰/LCD에 나감)
-state = {"speed": 0, "heading": None, "compass": "--",
-         "utc": None, "fix": False, "sats": 0, "hdop": None,
-         "lat": None, "lon": None, "alt": None,
-         "g_lon": 0.0, "g_lat": 0.0,
-         "bms": None, "bms_ok": False}
+state = {
+    "speed": 0,
+    "heading": None,
+    "compass": "--",
+    "utc": None,
+    "fix": False,
+    "sats": 0,
+    "hdop": None,
+    "lat": None,
+    "lon": None,
+    "alt": None,
+    "g_lon": 0.0,
+    "g_lat": 0.0,
+    "bms": None,
+    "bms_ok": False,
+}
 state_lock = threading.Lock()
 
 # 배터리 누적 사용량 (이번 주행). 전류/전력 적분.
@@ -204,9 +275,26 @@ usage_lock = threading.Lock()
 
 latest = {"gga": None, "vtg": None}
 latest_lock = threading.Lock()
+latest_times = {"gga": None, "vtg": None}
 
-COMPASS_16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
-              "S","SSW","SW","WSW","W","WNW","NW","NNW"]
+COMPASS_16 = [
+    "N",
+    "NNE",
+    "NE",
+    "ENE",
+    "E",
+    "ESE",
+    "SE",
+    "SSE",
+    "S",
+    "SSW",
+    "SW",
+    "WSW",
+    "W",
+    "WNW",
+    "NW",
+    "NNW",
+]
 
 
 def heading_to_compass(deg):
@@ -221,9 +309,25 @@ def dbg(*a):
 def rotate_logs(prefix):
     os.makedirs(LOG_DIR, exist_ok=True)
     files = sorted(glob.glob(os.path.join(LOG_DIR, f"{prefix}_*.csv")))
-    for f in files[:max(0, len(files) - (KEEP_FILES - 1))]:
+    # A CSV is eligible only after complete, explicit server acknowledgement.
+    # Raw NMEA and unacknowledged CSVs are not silently evicted on reboot.
+    eligible = []
+    for filename in files:
         try:
-            os.remove(f); dbg("삭제:", os.path.basename(f))
+            info = json.loads(Path(filename + ".acked").read_text(encoding="utf8"))
+            stat = Path(filename).stat()
+            if (
+                info["bytes"] == stat.st_size
+                and info["mtime_ns"] == stat.st_mtime_ns
+                and not Path(filename + ".active").exists()
+            ):
+                eligible.append(filename)
+        except (OSError, ValueError, KeyError):
+            pass
+    for f in eligible[: max(0, len(files) - (KEEP_FILES - 1))]:
+        try:
+            os.remove(f)
+            dbg("삭제:", os.path.basename(f))
         except OSError:
             pass
 
@@ -231,41 +335,75 @@ def rotate_logs(prefix):
 # ============================================================
 #  GPS 읽기 (10Hz raw 로깅 + 최신 GGA/VTG 보관) — v5와 동일
 # ============================================================
-def gps_reader():
-    rotate_logs("gps")
-    path = os.path.join(LOG_DIR, f"gps_{datetime.now(KST):%Y%m%d_%H%M%S}.csv")
-    dbg("raw 로그:", path)
-    f = open(path, "a", buffering=8192)
-    last_flush = time.time(); last_stat = time.time(); lines = 0
+def raw_logger():
+    handle = None
+    try:
+        Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+        handle = open(
+            os.path.join(LOG_DIR, f"gps_{SESSION_ID}.csv"), "a", buffering=8192
+        )
+        last_flush = time.monotonic()
+        while not STOP.is_set() or not RAW_QUEUE.empty():
+            try:
+                raw = RAW_QUEUE.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                handle.write(raw + "\n")
+                if time.monotonic() - last_flush >= FLUSH_INTERVAL:
+                    handle.flush()
+                    last_flush = time.monotonic()
+            except OSError as exc:
+                RUNTIME.raw_error = str(exc)[:120]
+    except OSError as exc:
+        RUNTIME.raw_error = str(exc)[:120]
+    finally:
+        if handle:
+            try:
+                handle.close()
+            except OSError:
+                pass
 
-    while True:
+
+def gps_reader():
+    while not STOP.is_set():
+        ser = None
         try:
+            if serial is None:
+                raise RuntimeError("pyserial is not installed")
             ser = serial.Serial(GPS_PORT, GPS_BAUD, timeout=1)
-        except Exception as e:
-            dbg("port open fail:", e); time.sleep(3); continue
-        try:
-            while True:
+            while not STOP.is_set():
                 raw = ser.readline().decode("ascii", errors="replace").strip()
                 if len(raw) < 6 or raw[0] != "$":
                     continue
-                f.write(raw + "\n"); lines += 1
-                now = time.time()
-                if now - last_flush >= FLUSH_INTERVAL:
-                    f.flush(); last_flush = now
+                if "*" in raw:
+                    payload, checksum = raw[1:].rsplit("*", 1)
+                    value = 0
+                    for char in payload:
+                        value ^= ord(char)
+                    try:
+                        if value != int(checksum[:2], 16):
+                            continue
+                    except ValueError:
+                        continue
+                now = time.monotonic()
                 tag = raw[3:6]
-                if tag == "GGA":
-                    with latest_lock: latest["gga"] = raw
-                elif tag == "VTG":
-                    with latest_lock: latest["vtg"] = raw
-                if DEBUG and now - last_stat >= 5.0:
-                    print(f"[RATE] {lines/5:.0f} lines/s | in_waiting={ser.in_waiting}B",
-                          flush=True)
-                    lines = 0; last_stat = now
-        except Exception as e:
-            dbg("read error:", e, "-> reconnect")
-            try: ser.close()
-            except Exception: pass
-            time.sleep(1)
+                if tag in ("GGA", "VTG"):
+                    key = tag.lower()
+                    with latest_lock:
+                        latest[key] = raw
+                        latest_times[key] = now
+                try:
+                    RAW_QUEUE.put_nowait(raw)
+                except queue.Full:
+                    RUNTIME.raw_dropped += 1
+                    RUNTIME.raw_error = "raw queue full"
+        except Exception as exc:
+            dbg("GPS reconnect:", type(exc).__name__)
+            STOP.wait(1)
+        finally:
+            if ser is not None:
+                ser.close()
 
 
 def _nmea_to_deg(val, hemi):
@@ -274,8 +412,9 @@ def _nmea_to_deg(val, hemi):
         return None
     try:
         dot = val.index(".")
-        deg_len = dot - 2               # 분은 항상 2자리+소수
-        d = float(val[:deg_len]); m = float(val[deg_len:])
+        deg_len = dot - 2  # 분은 항상 2자리+소수
+        d = float(val[:deg_len])
+        m = float(val[deg_len:])
         dec = d + m / 60.0
         if hemi in ("S", "W"):
             dec = -dec
@@ -311,8 +450,15 @@ def parse_gga(line):
             hdop = float(p[8]) if len(p) > 8 and p[8] else None
         except ValueError:
             hdop = None
-    return {"fix": fixq >= 1, "sats": sats, "utc": utc,
-            "lat": lat, "lon": lon, "alt": alt, "hdop": hdop}
+    return {
+        "fix": fixq >= 1,
+        "sats": sats,
+        "utc": utc,
+        "lat": lat,
+        "lon": lon,
+        "alt": alt,
+        "hdop": hdop,
+    }
 
 
 def parse_vtg(line):
@@ -337,8 +483,8 @@ def _calc_gforce(prev, cur, dt):
     GPS 기반이라 근사. IMU 붙이면 이 함수 대신 IMU 값 사용."""
     if dt <= 0 or prev is None:
         return 0.0, 0.0
-    v_prev = prev[0] / 3.6   # km/h -> m/s
-    v_cur  = cur[0] / 3.6
+    v_prev = prev[0] / 3.6  # km/h -> m/s
+    v_cur = cur[0] / 3.6
     # 종G: dv/dt
     g_lon = (v_cur - v_prev) / dt / G_ACCEL
     # 횡G: v * (dheading/dt in rad)
@@ -347,96 +493,125 @@ def _calc_gforce(prev, cur, dt):
         dh = cur[1] - prev[1]
         # -180~180 로 정규화 (방향 wrap 처리)
         dh = (dh + 180) % 360 - 180
-        omega = math.radians(dh) / dt        # rad/s
+        omega = math.radians(dh) / dt  # rad/s
         g_lat = (v_cur * omega) / G_ACCEL
     return round(g_lon, 2), round(g_lat, 2)
 
 
 def display_updater():
-    speed_hist = deque(maxlen=SPEED_WINDOW)
-    prev_sc = None          # (speed, course) 이전값
-    prev_t = time.time()
-    while True:
-        time.sleep(DISPLAY_RATE)
+    previous = filtered = None
+    seen_position = seen_speed = None
+    while not STOP.wait(DISPLAY_RATE):
         with latest_lock:
-            gga = latest["gga"]; vtg = latest["vtg"]
-        g = parse_gga(gga) if gga else None
-        v = parse_vtg(vtg) if vtg else None
-        now = time.time(); dt = now - prev_t; prev_t = now
+            raw = dict(latest)
+            stamps = dict(latest_times)
+        now = time.monotonic()
+        g = parse_gga(raw["gga"]) if raw["gga"] else None
+        v = parse_vtg(raw["vtg"]) if raw["vtg"] else None
+        gps_ok = g and stamps["gga"] is not None and now - stamps["gga"] <= 1.5
+        speed_ok = v and stamps["vtg"] is not None and now - stamps["vtg"] <= 1.5
         with state_lock:
-            if g is None:
-                state["fix"] = False
+            if gps_ok:
+                state.update(g)
             else:
-                state["fix"] = g["fix"]; state["sats"] = g["sats"]
-                if g["utc"]: state["utc"] = g["utc"]
-                state["hdop"] = g.get("hdop")
-                # 위경도/고도: fix 있을 때만 갱신 (없으면 None 유지 -> 지도 궤적 안 그림)
-                if g["fix"]:
-                    state["lat"] = g["lat"]; state["lon"] = g["lon"]
-                    state["alt"] = g.get("alt")
-                else:
-                    state["lat"] = None; state["lon"] = None; state["alt"] = None
+                state.update(fix=False, lat=None, lon=None, alt=None)
+            if not (gps_ok and speed_ok and g["fix"] and v["spd_kmh"] is not None):
+                filtered = previous = None
+                state.update(speed=None, heading=None, g_lon=None, g_lat=None)
+            elif seen_speed != stamps["vtg"]:
+                dt = stamps["vtg"] - seen_speed if seen_speed is not None else 0.1
+                alpha = 1 - math.exp(-max(0.001, dt) / 0.25)
+                filtered = (
+                    v["spd_kmh"]
+                    if filtered is None
+                    else filtered + alpha * (v["spd_kmh"] - filtered)
+                )
+                state["speed_raw"] = v["spd_kmh"]
+                state["speed"] = 0 if filtered < SPEED_CUTOFF else round(filtered, 1)
+                state["heading"] = (
+                    v["course"] if filtered >= HEADING_MIN_SPEED else None
+                )
+                state["compass"] = (
+                    heading_to_compass(v["course"])
+                    if state["heading"] is not None
+                    else "--"
+                )
+                state["g_lon"], state["g_lat"] = _calc_gforce(
+                    previous, (filtered, v["course"]), dt
+                )
+                previous = (filtered, v["course"])
+                seen_speed = stamps["vtg"]
+            snapshot = dict(state)
+        if RUNTIME:
+            at = (
+                min(x for x in stamps.values() if x is not None)
+                if any(x is not None for x in stamps.values())
+                else now
+            )
+            RUNTIME.update_gps(
+                snapshot,
+                at,
+                position_updated=seen_position != stamps["gga"],
+                position_time=stamps["gga"],
+            )
+            seen_position = stamps["gga"]
 
-            if state["fix"] and v is not None and v["spd_kmh"] is not None:
-                speed_hist.append(v["spd_kmh"])
-                spd = sum(speed_hist) / len(speed_hist)
-                state["speed"] = 0 if spd < SPEED_CUTOFF else round(spd)
-                if v["course"] is not None and spd >= HEADING_MIN_SPEED:
-                    state["heading"] = v["course"]
-                    state["compass"] = heading_to_compass(v["course"])
-                # G-force
-                if G_ENABLED:
-                    cur_sc = (spd, v["course"])
-                    g_lon, g_lat = _calc_gforce(prev_sc, cur_sc, dt)
-                    state["g_lon"] = g_lon; state["g_lat"] = g_lat
-                    prev_sc = cur_sc
-            else:
-                speed_hist.clear(); state["speed"] = 0
-                state["g_lon"] = 0.0; state["g_lat"] = 0.0
-                prev_sc = None
-        dbg(f"spd={state['speed']} lat={state['lat']} lon={state['lon']} "
-            f"gLon={state['g_lon']} gLat={state['g_lat']} fix={state['fix']}")
 
-
-# ============================================================
-#  BMS 폴링 — v5와 동일
-# ============================================================
 def bms_poller():
     if not BMS_ENABLED:
-        dbg("BMS 비활성"); return
+        dbg("BMS 비활성")
+        return
     if not BMS_AVAILABLE:
         print(f"[BMS] 모듈 임포트 실패 -> BMS 없이 동작: {_BMS_IMPORT_ERR}", flush=True)
         return
     bms_state = {}
-    while True:
+    while not STOP.is_set():
         bms = BMSReader(CAN_CHANNEL)
         try:
             bms.open()
             print("[BMS] can0 연결 성공", flush=True)
-            with state_lock: state["bms_ok"] = True
+            with state_lock:
+                state["bms_ok"] = True
             t_fast = t_slow = t_alarm = 0.0
-            while True:
-                now = time.time(); changed = False
+            while not STOP.is_set():
+                now = time.monotonic()
+                changed = False
                 if now - t_fast >= BMS_FAST_INTERVAL:
                     r = bms.read_fast()
-                    if r: bms_state.update(r); changed = True
+                    if r:
+                        bms_state.update(r)
+                        changed = True
+                        if RUNTIME:
+                            RUNTIME.update_bms(r, r.get("_received"))
                     t_fast = now
                 if now - t_slow >= BMS_SLOW_INTERVAL:
                     r = bms.read_slow()
-                    if r: bms_state.update(r); changed = True
+                    if r:
+                        bms_state.update(r)
+                        changed = True
+                        if RUNTIME:
+                            RUNTIME.update_bms(r, r.get("_received"))
                     t_slow = now
                 if now - t_alarm >= BMS_ALARM_INTERVAL:
                     fa = bms.read_alarms()
-                    if fa: bms_state["faults"] = fa; changed = True
+                    if fa:
+                        bms_state["faults"] = fa
+                        changed = True
+                        if RUNTIME:
+                            RUNTIME.update_bms({"faults": fa})
                     t_alarm = now
                 if changed:
-                    with state_lock: state["bms"] = dict(bms_state)
+                    with state_lock:
+                        state["bms"] = dict(bms_state)
                 time.sleep(0.05)
         except Exception as e:
             print(f"[BMS] 오류 -> 3초 후 재연결: {e}", flush=True)
-            with state_lock: state["bms_ok"] = False
-            try: bms.close()
-            except Exception: pass
+            with state_lock:
+                state["bms_ok"] = False
+            try:
+                bms.close()
+            except Exception:
+                pass
             time.sleep(3)
 
 
@@ -444,59 +619,9 @@ def bms_poller():
 #  텔레메트리 스냅샷 (로깅 + 전송 공유)
 # ============================================================
 def telemetry_snapshot():
-    with state_lock:
-        s = dict(state)
-        b = dict(state.get("bms") or {})
-    now = datetime.now(KST)
-    faults = b.get("faults") or {}
-    if faults.get("dangers"):
-        alarm_level = 2; alarms = ";".join(faults["dangers"])
-    elif faults.get("warnings"):
-        alarm_level = 1; alarms = ";".join(faults["warnings"])
-    else:
-        alarm_level = 0; alarms = ""
-    # --- 배터리 누적 사용량 (전류/전력 시간적분) ---
-    # current: 방전 양수 / 회생 음수 -> 순소비. 회생 시 자동 차감됨.
-    cur_a = b.get("current")
-    pwr_w = b.get("power_w")
-    now_t = time.time()
-    with usage_lock:
-        lt = usage["last_t"]
-        if lt is not None and cur_a is not None:
-            dt_h = (now_t - lt) / 3600.0
-            if 0 < dt_h < 0.01:            # 36초 이상 간격은 무시(재시작/멈춤)
-                usage["used_ah"] += float(cur_a) * dt_h
-                if pwr_w is not None:
-                    usage["used_wh"] += float(pwr_w) * dt_h
-        # BMS 값이 있을 때만 시각 갱신 (없으면 적분 안 함)
-        if cur_a is not None:
-            usage["last_t"] = now_t
-        used_ah = round(usage["used_ah"], 3) if cur_a is not None or usage["used_ah"] else None
-        used_wh = round(usage["used_wh"], 1) if pwr_w is not None or usage["used_wh"] else None
-
-    check_clock_jump()          # 시계 점프 시 SESSION_ID 갱신
-    return {
-        "ts": now.isoformat(timespec="milliseconds"),
-        "vehicle": VEHICLE_ID,
-        "session": SESSION_ID,
-        "t_mono": round(time.monotonic() - T0_MONO, 3),
-        "lat": s.get("lat"), "lon": s.get("lon"), "alt": s.get("alt"),
-        "speed": s.get("speed"), "heading": s.get("heading"),
-        "sats": s.get("sats"), "fix": int(bool(s.get("fix"))),
-        "hdop": s.get("hdop"),
-        "g_lon": s.get("g_lon"), "g_lat": s.get("g_lat"),
-        "voltage": b.get("voltage"), "current": b.get("current"),
-        "soc": b.get("soc"), "power_w": b.get("power_w"),
-        "regen": int(bool(b.get("regen"))) if "regen" in b else "",
-        "remain_ah": b.get("remain_ah"), "range_km": b.get("range_km"),
-        "state": b.get("state"),
-        "used_ah": used_ah, "used_wh": used_wh,
-        "temp_max": b.get("temp_max"), "temp_min": b.get("temp_min"),
-        "cell_v_max": b.get("cell_v_max"), "cell_v_min": b.get("cell_v_min"),
-        "cell_v_diff": b.get("cell_v_diff"),
-        "balancing": int(bool(b.get("any_balancing"))) if "any_balancing" in b else "",
-        "alarm_level": alarm_level, "alarms": alarms,
-    }
+    if RUNTIME is not None:
+        return RUNTIME.snapshot()
+    return {}
 
 
 def _csv_escape(v):
@@ -509,78 +634,213 @@ def _csv_escape(v):
 
 
 def csv_logger():
-    if not TELEM_ENABLED:
-        return
-    rotate_logs("telem")
-    path = os.path.join(LOG_DIR, f"telem_{datetime.now(KST):%Y%m%d_%H%M%S}.csv")
-    dbg("텔레메트리 로그:", path)
-    f = open(path, "a", buffering=8192)
-    f.write(",".join(TELEM_FIELDS) + "\n")
-    last_flush = time.time()
-    while True:
-        time.sleep(TELEM_LOG_RATE)
+    handle = writer = None
+    path = Path(LOG_DIR) / f"telem_{SESSION_ID}.csv"
+    active = Path(str(path) + ".active")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rotate_logs("telem")
+        handle = path.open("a", newline="", encoding="utf8")
+        writer = csv.DictWriter(handle, fieldnames=V7_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        active.write_text(SESSION_ID, encoding="utf8")
+    except OSError as exc:
+        RUNTIME.csv_error = str(exc)[:120]
+    deadline = time.monotonic()
+    try:
+        while not STOP.is_set():
+            snap = RUNTIME.tick()
+            if writer is not None:
+                try:
+                    writer.writerow(snap)
+                    handle.flush()
+                    RUNTIME.csv_error = None
+                except OSError as exc:
+                    RUNTIME.csv_error = str(exc)[:120]
+            deadline += TELEM_LOG_RATE
+            remaining = deadline - time.monotonic()
+            if remaining < 0:
+                RUNTIME.deadline_misses += 1
+                deadline = time.monotonic()
+            STOP.wait(max(0, remaining))
+    finally:
+        if handle:
+            handle.close()
         try:
-            snap = telemetry_snapshot()
-            f.write(",".join(_csv_escape(snap.get(k)) for k in TELEM_FIELDS) + "\n")
-            now = time.time()
-            if now - last_flush >= TELEM_FLUSH:
-                f.flush(); last_flush = now
-        except Exception as e:
-            dbg("csv_logger 오류:", e)
+            active.unlink()
+        except OSError:
+            pass
 
 
-# ============================================================
-#  서버 전송 (WebSocket) — VPN 내부, 끊기면 재연결
-# ============================================================
 def uploader():
-    if not UPLOAD_ENABLED:
-        dbg("업로더 비활성"); return
-    if not WS_AVAILABLE:
-        print(f"[UP] websocket-client 없음 -> 전송 비활성. "
-              f"pip3 install websocket-client --break-system-packages", flush=True)
+    if not UPLOAD_ENABLED or not WS_AVAILABLE or REPLAY:
         return
-    while True:
+    while not STOP.is_set():
+        ws = None
         try:
             ws = websocket.create_connection(
-                SERVER_WS_URL,
-                header=[f"X-Auth-Token: {UPLOAD_TOKEN}"],
-                timeout=5)
-            print(f"[UP] 서버 연결: {SERVER_WS_URL}", flush=True)
-            while True:
-                snap = telemetry_snapshot()
-                ws.send(json.dumps(snap, ensure_ascii=False))
-                time.sleep(UPLOAD_RATE)
-        except Exception as e:
-            dbg(f"[UP] 전송 오류 -> 3초 후 재연결: {e}")
-            try: ws.close()
-            except Exception: pass
-            time.sleep(3)
+                SERVER_WS_URL, header=[f"X-Auth-Token: {UPLOAD_TOKEN}"], timeout=5
+            )
+            while not STOP.is_set():
+                with RUNTIME.lock:
+                    live = dict(RUNTIME.latest) if RUNTIME.latest else {}
+                records = RUNTIME.outbox(40)
+                if live:
+                    records = [live] + [
+                        r for r in records if r["sample_id"] != live["sample_id"]
+                    ]
+                ws.send(
+                    json.dumps(
+                        {
+                            "type": "batch",
+                            "records": records,
+                            "events": RUNTIME.events_outbox(),
+                            "receipts": RUNTIME.command_receipts(),
+                        },
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
+                )
+                reply = json.loads(ws.recv())
+                if reply.get("type") != "ack":
+                    raise ValueError("v7 durable acknowledgement required")
+                RUNTIME.acknowledge(reply.get("accepted", []))
+                RUNTIME.acknowledge_events(reply.get("event_ids", []))
+                for command in reply.get("commands", []):
+                    try:
+                        RUNTIME.receive_command(command)
+                    except ValueError as exc:
+                        RUNTIME.event(
+                            "command_rejected",
+                            {"id": command.get("id"), "reason": str(exc)},
+                        )
+                STOP.wait(UPLOAD_RATE)
+        except Exception as exc:
+            dbg("upload reconnect:", type(exc).__name__)
+            STOP.wait(3)
+        finally:
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
 
 
-# ============================================================
-#  웹서버 (계기판 SSE) — SSE_RATE 상수화
-# ============================================================
 class Handler(BaseHTTPRequestHandler):
     # ★ HTTP/1.1 로 응답해야 nginx 리버스 프록시(proxy_http_version 1.1)와 맞는다.
     #   1.0 + Connection:keep-alive + Content-Length 없음 = 응답 끝을 알 수 없어
     #   nginx 가 SSE 를 흘려보내지 못한다(계기판이 도메인에서 멈추는 원인).
     protocol_version = "HTTP/1.1"
-    timeout = 30                     # keep-alive 커넥션이 스레드를 물고 있지 않도록
+    timeout = 30  # keep-alive 커넥션이 스레드를 물고 있지 않도록
 
-    def log_message(self, *a): pass
+    def log_message(self, *a):
+        pass
 
     def do_GET(self):
         global DEBUG
-        p = self.path
-        if p in ("/generate_204","/gen_204","/hotspot-detect.html",
-                 "/library/test/success.html","/connecttest.txt","/ncsi.txt"):
-            self._captive(p); return
-        if p == "/debug/on": DEBUG = True; self._text("debug ON"); return
-        if p == "/debug/off": DEBUG = False; self._text("debug OFF"); return
-        if p == "/debug": self._text(f"debug is {'ON' if DEBUG else 'OFF'}"); return
-        if p in ("/","/index.html"): self._html()
-        elif p == "/stream": self._stream()
-        else: self.send_error(404)
+        p = urlsplit(self.path).path
+        if p in (
+            "/generate_204",
+            "/gen_204",
+            "/hotspot-detect.html",
+            "/library/test/success.html",
+            "/connecttest.txt",
+            "/ncsi.txt",
+        ):
+            self._captive(p)
+            return
+        if p == "/debug/on":
+            DEBUG = True
+            self._text("debug ON")
+            return
+        if p == "/debug/off":
+            DEBUG = False
+            self._text("debug OFF")
+            return
+        if p == "/debug":
+            self._text(f"debug is {'ON' if DEBUG else 'OFF'}")
+            return
+        if p in ("/", "/index.html"):
+            self._html()
+        elif p == "/legacy":
+            self._html(legacy=True)
+        elif p == "/api/state":
+            self._json(telemetry_snapshot())
+        elif p == "/api/report":
+            self._json(RUNTIME.report())
+        elif p == "/stream":
+            self._stream()
+        else:
+            self.send_error(404)
+
+    def _json(self, value, code=200):
+        data = json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+        if path not in (
+            "/api/control",
+            "/api/command/seen",
+            "/api/measurements/external",
+        ):
+            self._json({"error": "not found"}, 404)
+            return
+        token = self.headers.get("X-Auth-Token", "")
+        if UPLOAD_TOKEN in (
+            "change-me",
+            "unimotors-secret-change-me",
+        ) or not hmac.compare_digest(token, UPLOAD_TOKEN):
+            self._json({"error": "configured token required"}, 401)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 32768:
+                raise ValueError("invalid body size")
+            body = json.loads(self.rfile.read(size))
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+            if path == "/api/measurements/external":
+                RUNTIME.update_external_vi(body)
+            elif path == "/api/command/seen":
+                RUNTIME.acknowledge_command(body["id"])
+            else:
+                snap = RUNTIME.snapshot()
+                speed = snap.get("speed")
+                if speed is not None and speed >= 2:
+                    raise ValueError("stop before changing settings")
+                if speed is None and body.get("confirm_stationary") is not True:
+                    raise ValueError("stationary confirmation required")
+                action = body.get("action")
+                if action == "resume":
+                    RUNTIME.resume(body.get("same_battery") is True)
+                elif action == "new_race":
+                    RUNTIME.new_race(body.get("battery_epoch"))
+                elif action == "profile":
+                    RUNTIME.configure(body.get("profile", {}))
+                elif action == "phase":
+                    RUNTIME.set_phase(body.get("phase"))
+                elif action == "driver":
+                    RUNTIME.driver(body.get("driver_id"), body.get("settings"))
+                elif action == "lap_correction":
+                    RUNTIME.correct_laps(body.get("count"))
+                else:
+                    raise ValueError("unknown action")
+                RUNTIME.event(
+                    "operator_confirmation",
+                    {
+                        "action": action,
+                        "stationary_attested": body.get("confirm_stationary") is True,
+                    },
+                )
+            self._json({"ok": True, "state": RUNTIME.snapshot()})
+        except (ValueError, KeyError, TypeError) as exc:
+            self._json({"error": str(exc)}, 400)
 
     def _captive(self, p):
         """폰의 인터넷 연결 확인 요청에 응답.
@@ -588,7 +848,8 @@ class Handler(BaseHTTPRequestHandler):
            또한 체크 도메인이 이 Pi 로 해석되도록 dnsmasq DNS 하이재킹이 필요하다.
            (자세한 설정은 마스터 문서 '캡티브 포털' 절 참고)"""
         if CAPTIVE_MODE == "off":
-            self.send_error(404); return
+            self.send_error(404)
+            return
 
         if CAPTIVE_MODE == "portal":
             # 302 리다이렉트 → 폰이 '캡티브 포털'로 인식해 셀룰러를 유지한다.
@@ -602,61 +863,76 @@ class Handler(BaseHTTPRequestHandler):
         # CAPTIVE_MODE == "success": 폰이 '인터넷 정상'으로 판단 (NAT 켠 경우에만)
         if p in ("/hotspot-detect.html", "/library/test/success.html"):
             b = b"<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"
-            self.send_response(200); self.send_header("Content-Type","text/html")
-            self.send_header("Content-Length",str(len(b))); self.end_headers()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
             self.wfile.write(b)
         elif p == "/connecttest.txt":
-            b = b"Microsoft Connect Test"          # Windows 는 이 문자열을 기대
-            self.send_response(200); self.send_header("Content-Type","text/plain")
-            self.send_header("Content-Length",str(len(b))); self.end_headers()
+            b = b"Microsoft Connect Test"  # Windows 는 이 문자열을 기대
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
             self.wfile.write(b)
         elif p == "/ncsi.txt":
             b = b"Microsoft NCSI"
-            self.send_response(200); self.send_header("Content-Type","text/plain")
-            self.send_header("Content-Length",str(len(b))); self.end_headers()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
             self.wfile.write(b)
         else:
             self.send_response(204)
-            self.send_header("Content-Length","0")
+            self.send_header("Content-Length", "0")
             self.end_headers()
 
     def _text(self, s):
-        b = s.encode(); self.send_response(200)
-        self.send_header("Content-Type","text/plain; charset=utf-8")
-        self.send_header("Content-Length",str(len(b))); self.end_headers()
+        b = s.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
         self.wfile.write(b)
 
-    def _html(self):
-        b = DASHBOARD_HTML.encode(); self.send_response(200)
-        self.send_header("Content-Type","text/html; charset=utf-8")
-        self.send_header("Content-Length",str(len(b))); self.end_headers()
+    def _html(self, legacy=False):
+        page = Path(__file__).with_name("driver_dashboard.html")
+        b = DASHBOARD_HTML.encode() if legacy else page.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
         self.wfile.write(b)
 
     def _stream(self):
         """SSE. HTTP/1.1 이므로 chunked 로 보내야 프록시가 길이를 판단할 수 있다."""
         self.send_response(200)
-        self.send_header("Content-Type","text/event-stream")
-        self.send_header("Cache-Control","no-cache")
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
         # ★ nginx 가 이 응답만 버퍼링하지 않게 지시 (설정 없이도 동작)
-        self.send_header("X-Accel-Buffering","no")
+        self.send_header("X-Accel-Buffering", "no")
         chunked = self.protocol_version == "HTTP/1.1"
         if chunked:
-            self.send_header("Transfer-Encoding","chunked")
+            self.send_header("Transfer-Encoding", "chunked")
         else:
-            self.send_header("Connection","close")
+            self.send_header("Connection", "close")
         self.end_headers()
         try:
-            while True:
-                with state_lock:
-                    payload = json.dumps(state)
+            while not STOP.is_set():
+                payload = json.dumps(
+                    telemetry_snapshot(), ensure_ascii=False, allow_nan=False
+                )
                 body = f"data: {payload}\n\n".encode()
                 if chunked:
                     self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n")
                 else:
                     self.wfile.write(body)
-                self.wfile.flush(); time.sleep(SSE_RATE)
-        except (BrokenPipeError, ConnectionResetError):
+                self.wfile.flush()
+                time.sleep(SSE_RATE)
+        except OSError:
             pass
+        finally:
+            self.close_connection = True
 
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -802,23 +1078,109 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 """
 
 
+def replay_input(path, rate, current_sign=None):
+    records, rejected = parse_csv(Path(path).read_text(encoding="utf-8-sig"))
+    if rejected:
+        raise ValueError("replay CSV has rejected rows")
+    if current_sign is not None and any(
+        r.get("current_convention") == "discharge_positive" for r in records
+    ):
+        raise ValueError(
+            "stored canonical CSV must be replayed without --replay-current-sign"
+        )
+    for record in records:
+        if STOP.is_set():
+            break
+        RUNTIME.update_gps(dict(record, fix=bool(record.get("fix"))))
+        # Stored samples already use the canonical convention. Legacy CSV is
+        # treated as stored canonical values unless an explicit native sign is given.
+        canonical = current_sign is None
+        RUNTIME.update_bms(
+            {
+                k: record[k]
+                for k in ("voltage", "current", "soc", "temp_max", "temp_min")
+                if record.get(k) is not None
+            },
+            canonical=canonical,
+        )
+        STOP.wait(rate)
+    RUNTIME.event("replay_complete", {"records": len(records)})
+
+
 def main():
-    print(f"UNIMOTORS v6: http://0.0.0.0:{PORT} (debug={'ON' if DEBUG else 'OFF'})")
-    print(f"로그: {LOG_DIR} (raw NMEA + telem, 최근 {KEEP_FILES}개)")
-    print(f"BMS: {'ENABLED' if (BMS_ENABLED and BMS_AVAILABLE) else 'OFF'} ({CAN_CHANNEL})")
-    print(f"업로더: {'ENABLED' if (UPLOAD_ENABLED and WS_AVAILABLE) else 'OFF'} "
-          f"-> {SERVER_WS_URL} ({1/UPLOAD_RATE:.0f}Hz)")
-    print(f"텔레메트리 CSV: {'ON' if TELEM_ENABLED else 'OFF'} ({TELEM_LOG_RATE}s)")
-    threading.Thread(target=gps_reader, daemon=True).start()
-    threading.Thread(target=display_updater, daemon=True).start()
-    threading.Thread(target=bms_poller, daemon=True).start()
-    threading.Thread(target=csv_logger, daemon=True).start()
-    threading.Thread(target=uploader, daemon=True).start()
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    global RUNTIME, REPLAY, SESSION_ID, LOG_DIR, VEHICLE_ID
+    parser = argparse.ArgumentParser(description="UNIMOTORS v7 local cluster")
+    parser.add_argument("--replay", help="CSV replay; upload disabled")
+    parser.add_argument("--replay-interval", type=float, default=0.2)
+    parser.add_argument(
+        "--replay-current-sign",
+        type=int,
+        choices=(-1, 1),
+        help="interpret legacy CSV current as native (-1 or +1); default: stored canonical current",
+    )
+    parser.add_argument("--bind", default="0.0.0.0")
+    args = parser.parse_args()
+    REPLAY = bool(args.replay)
+    state_dir = os.environ.get("UNIMOTORS_STATE_DIR", os.path.join(LOG_DIR, "state"))
+    if REPLAY:
+        LOG_DIR = os.path.join(LOG_DIR, "replay")
+        state_dir = os.path.join(state_dir, "replay")
+        VEHICLE_ID = "replay-" + VEHICLE_ID
+    RUNTIME = RaceRuntime(
+        state_dir,
+        vehicle=VEHICLE_ID,
+        battery_epoch=os.environ.get("UNIMOTORS_BATTERY_EPOCH"),
+        resume_window=float(os.environ.get("UNIMOTORS_RESUME_SECONDS", "300")),
+        persist_interval=float(os.environ.get("UNIMOTORS_PERSIST_SECONDS", "1")),
+        current_sign=args.replay_current_sign
+        if REPLAY and args.replay_current_sign is not None
+        else None,
+    )
+    SESSION_ID = RUNTIME.segment
+    RUNTIME.replay = REPLAY
+    print(
+        f"UNIMOTORS {VERSION}: http://{args.bind}:{PORT}; replay={REPLAY}", flush=True
+    )
+    workers = []
+
+    def start(target, args=()):
+        worker = threading.Thread(target=target, args=args, daemon=True)
+        worker.start()
+        workers.append(worker)
+
+    start(csv_logger)
+    if REPLAY:
+        if args.replay_current_sign is not None:
+            RUNTIME.configure({"current_sign": args.replay_current_sign})
+        RUNTIME.event(
+            "replay_basis",
+            {
+                "current": "stored_canonical"
+                if args.replay_current_sign is None
+                else "native",
+                "current_sign": args.replay_current_sign,
+            },
+        )
+        start(
+            replay_input, (args.replay, args.replay_interval, args.replay_current_sign)
+        )
+    else:
+        start(raw_logger)
+        start(gps_reader)
+        start(display_updater)
+        start(bms_poller)
+        start(uploader)
+    srv = ThreadingHTTPServer((args.bind, PORT), Handler)
     try:
-        srv.serve_forever()
+        srv.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
-        print("\n종료"); srv.shutdown()
+        pass
+    finally:
+        STOP.set()
+        srv.server_close()
+        for worker in workers:
+            worker.join(timeout=5)
+        RUNTIME.close()
 
 
 if __name__ == "__main__":
