@@ -13,6 +13,16 @@ cloudflare.ini
 *.db
 *.db-journal
 *.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.active
+*.acked
+*.acked.tmp
+.qa/
+.pytest_cache/
+.ruff_cache/
 gps_logs/
 backup/
 *.csv

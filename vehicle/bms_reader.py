@@ -23,25 +23,25 @@ import time
 
 # ---- 상수 (실측 확정) ---------------------------------------------------
 
-PRIORITY      = 0x18
-ADDR_BMS      = 0x01
-ADDR_PC       = 0x40
+PRIORITY = 0x18
+ADDR_BMS = 0x01
+ADDR_PC = 0x40
 
-CURRENT_OFFSET = 30000   # 0x90 전류: (raw - 30000) * 0.1 A  (음수 = 회생/충전)
-TEMP_OFFSET    = 40      # 0x92/0x96 온도: raw - 40 = ℃
+CURRENT_OFFSET = 30000  # 0x90 전류: (raw - 30000) * 0.1 A  (음수 = 회생/충전)
+TEMP_OFFSET = 40  # 0x92/0x96 온도: raw - 40 = ℃
 
-RATED_CAPACITY_AH = 80.0   # 팩 정격 용량 (실측: SOC50% 잔여 40Ah 확인)
+RATED_CAPACITY_AH = 80.0  # 팩 정격 용량 (실측: SOC50% 잔여 40Ah 확인)
 
 # 요청할 DataID
-DID_SOC_VI      = 0x90   # 누적전압/전류/SOC
-DID_CELL_MINMAX = 0x91   # 셀 최대/최소 전압
-DID_TEMP_MINMAX = 0x92   # 온도 최대/최소
-DID_MOS         = 0x93   # 상태 + MOS + 잔여용량(mAh)
-DID_STATUS      = 0x94   # 셀개수/센서개수/충전기·부하 상태
-DID_CELL_V      = 0x95   # 셀전압 (멀티프레임)
-DID_CELL_T      = 0x96   # 셀온도 (멀티프레임)
-DID_BALANCE     = 0x97   # 밸런싱 상태 비트맵
-DID_FAULT       = 0x98   # 고장/알람 비트맵
+DID_SOC_VI = 0x90  # 누적전압/전류/SOC
+DID_CELL_MINMAX = 0x91  # 셀 최대/최소 전압
+DID_TEMP_MINMAX = 0x92  # 온도 최대/최소
+DID_MOS = 0x93  # 상태 + MOS + 잔여용량(mAh)
+DID_STATUS = 0x94  # 셀개수/센서개수/충전기·부하 상태
+DID_CELL_V = 0x95  # 셀전압 (멀티프레임)
+DID_CELL_T = 0x96  # 셀온도 (멀티프레임)
+DID_BALANCE = 0x97  # 밸런싱 상태 비트맵
+DID_FAULT = 0x98  # 고장/알람 비트맵
 
 
 def _req_id(data_id: int) -> int:
@@ -57,47 +57,74 @@ def _resp_id(data_id: int) -> int:
 # ---- 0x98 알람 비트 정의 -------------------------------------------------
 # (byte_index, bit_index): (설명, 레벨)   level 1=주의(노랑), 2=위험(빨강)
 FAULT_BITS = {
-    (0, 0): ("셀 과전압 주의", 1),   (0, 1): ("셀 과전압 위험", 2),
-    (0, 2): ("셀 저전압 주의", 1),   (0, 3): ("셀 저전압 위험", 2),
-    (0, 4): ("총전압 과전압 주의", 1), (0, 5): ("총전압 과전압 위험", 2),
-    (0, 6): ("총전압 저전압 주의", 1), (0, 7): ("총전압 저전압 위험", 2),
-    (1, 0): ("충전 고온 주의", 1),   (1, 1): ("충전 고온 위험", 2),
-    (1, 2): ("충전 저온 주의", 1),   (1, 3): ("충전 저온 위험", 2),
-    (1, 4): ("방전 고온 주의", 1),   (1, 5): ("방전 고온 위험", 2),
-    (1, 6): ("방전 저온 주의", 1),   (1, 7): ("방전 저온 위험", 2),
-    (2, 0): ("충전 과전류 주의", 1), (2, 1): ("충전 과전류 위험", 2),
-    (2, 2): ("방전 과전류 주의", 1), (2, 3): ("방전 과전류 위험", 2),
-    (2, 4): ("SOC 높음 주의", 1),    (2, 5): ("SOC 높음 위험", 2),
-    (2, 6): ("SOC 낮음 주의", 1),    (2, 7): ("SOC 낮음 위험", 2),
-    (3, 0): ("전압 편차 주의", 1),   (3, 1): ("전압 편차 위험", 2),
-    (3, 2): ("온도 편차 주의", 1),   (3, 3): ("온도 편차 위험", 2),
-    (4, 0): ("충전MOS 고온", 2),     (4, 1): ("방전MOS 고온", 2),
-    (4, 2): ("충전MOS 온도센서 오류", 2), (4, 3): ("방전MOS 온도센서 오류", 2),
-    (4, 4): ("충전MOS 융착", 2),     (4, 5): ("방전MOS 융착", 2),
-    (4, 6): ("충전MOS 개방", 2),     (4, 7): ("방전MOS 개방", 2),
-    (5, 0): ("AFE 수집칩 오류", 2),  (5, 1): ("전압수집 이상", 2),
-    (5, 2): ("셀 온도센서 오류", 2), (5, 3): ("EEPROM 오류", 2),
-    (5, 4): ("RTC 오류", 1),         (5, 5): ("프리차지 실패", 2),
-    (5, 6): ("통신 오류", 2),        (5, 7): ("내부통신 오류", 2),
-    (6, 0): ("전류모듈 고장", 2),    (6, 1): ("총전압 검출 고장", 2),
-    (6, 2): ("단락보호 고장", 2),    (6, 3): ("저전압 충전금지", 1),
+    (0, 0): ("셀 과전압 주의", 1),
+    (0, 1): ("셀 과전압 위험", 2),
+    (0, 2): ("셀 저전압 주의", 1),
+    (0, 3): ("셀 저전압 위험", 2),
+    (0, 4): ("총전압 과전압 주의", 1),
+    (0, 5): ("총전압 과전압 위험", 2),
+    (0, 6): ("총전압 저전압 주의", 1),
+    (0, 7): ("총전압 저전압 위험", 2),
+    (1, 0): ("충전 고온 주의", 1),
+    (1, 1): ("충전 고온 위험", 2),
+    (1, 2): ("충전 저온 주의", 1),
+    (1, 3): ("충전 저온 위험", 2),
+    (1, 4): ("방전 고온 주의", 1),
+    (1, 5): ("방전 고온 위험", 2),
+    (1, 6): ("방전 저온 주의", 1),
+    (1, 7): ("방전 저온 위험", 2),
+    (2, 0): ("충전 과전류 주의", 1),
+    (2, 1): ("충전 과전류 위험", 2),
+    (2, 2): ("방전 과전류 주의", 1),
+    (2, 3): ("방전 과전류 위험", 2),
+    (2, 4): ("SOC 높음 주의", 1),
+    (2, 5): ("SOC 높음 위험", 2),
+    (2, 6): ("SOC 낮음 주의", 1),
+    (2, 7): ("SOC 낮음 위험", 2),
+    (3, 0): ("전압 편차 주의", 1),
+    (3, 1): ("전압 편차 위험", 2),
+    (3, 2): ("온도 편차 주의", 1),
+    (3, 3): ("온도 편차 위험", 2),
+    (4, 0): ("충전MOS 고온", 2),
+    (4, 1): ("방전MOS 고온", 2),
+    (4, 2): ("충전MOS 온도센서 오류", 2),
+    (4, 3): ("방전MOS 온도센서 오류", 2),
+    (4, 4): ("충전MOS 융착", 2),
+    (4, 5): ("방전MOS 융착", 2),
+    (4, 6): ("충전MOS 개방", 2),
+    (4, 7): ("방전MOS 개방", 2),
+    (5, 0): ("AFE 수집칩 오류", 2),
+    (5, 1): ("전압수집 이상", 2),
+    (5, 2): ("셀 온도센서 오류", 2),
+    (5, 3): ("EEPROM 오류", 2),
+    (5, 4): ("RTC 오류", 1),
+    (5, 5): ("프리차지 실패", 2),
+    (5, 6): ("통신 오류", 2),
+    (5, 7): ("내부통신 오류", 2),
+    (6, 0): ("전류모듈 고장", 2),
+    (6, 1): ("총전압 검출 고장", 2),
+    (6, 2): ("단락보호 고장", 2),
+    (6, 3): ("저전압 충전금지", 1),
 }
 
 
 class BMSReader:
-    def __init__(self, channel: str = "can0", timeout: float = 0.2,
-                 rated_capacity_ah: float = RATED_CAPACITY_AH):
+    def __init__(
+        self,
+        channel: str = "can0",
+        timeout: float = 0.2,
+        rated_capacity_ah: float = RATED_CAPACITY_AH,
+    ):
         self.channel = channel
         self.timeout = timeout
         self.rated_capacity_ah = rated_capacity_ah
         self.bus = None
         # 전비 학습용 상태
-        self._efficiency_km_per_ah = None   # 학습된 전비 (없으면 None)
+        self._efficiency_km_per_ah = None  # 학습된 전비 (없으면 None)
 
     # -- 연결 관리 --------------------------------------------------------
     def open(self):
-        self.bus = can.interface.Bus(channel=self.channel,
-                                     bustype="socketcan")
+        self.bus = can.interface.Bus(channel=self.channel, bustype="socketcan")
 
     def close(self):
         if self.bus is not None:
@@ -114,20 +141,31 @@ class BMSReader:
     # -- 저수준 요청/응답 -------------------------------------------------
     def _request(self, data_id: int, n_frames: int = 1):
         """DataID 요청 후 응답 프레임(들) 수집. n_frames>1이면 멀티프레임."""
-        req = can.Message(arbitration_id=_req_id(data_id),
-                          data=[0x88] * 8,
-                          is_extended_id=True)
+        req = can.Message(
+            arbitration_id=_req_id(data_id), data=[0x88] * 8, is_extended_id=True
+        )
         self.bus.send(req)
         want = _resp_id(data_id)
         frames = []
-        deadline = time.time() + self.timeout
-        while time.time() < deadline and len(frames) < n_frames:
-            msg = self.bus.recv(timeout=max(0, deadline - time.time()))
+        deadline = time.monotonic() + self.timeout * max(1, n_frames)
+        seen = set()
+        while time.monotonic() < deadline and len(frames) < n_frames:
+            msg = self.bus.recv(timeout=max(0, deadline - time.monotonic()))
             if msg is None:
                 break
-            if msg.arbitration_id == want:
+            if (
+                msg.arbitration_id == want
+                and msg.is_extended_id
+                and len(msg.data) == 8
+                and not msg.is_error_frame
+                and not msg.is_remote_frame
+            ):
+                if n_frames > 1 and (
+                    msg.data[0] in seen or not 1 <= msg.data[0] <= n_frames
+                ):
+                    continue
                 frames.append(bytes(msg.data))
-                deadline = time.time() + self.timeout  # 프레임 하나 받으면 연장
+                seen.add(msg.data[0])
         return frames
 
     # -- 개별 파서 --------------------------------------------------------
@@ -139,12 +177,12 @@ class BMSReader:
         d = f[0]
         voltage = struct.unpack(">H", d[0:2])[0] * 0.1
         current = (struct.unpack(">H", d[4:6])[0] - CURRENT_OFFSET) * 0.1
-        soc     = struct.unpack(">H", d[6:8])[0] * 0.1
+        soc = struct.unpack(">H", d[6:8])[0] * 0.1
         return {
             "voltage": round(voltage, 1),
             "current": round(current, 1),
             "soc": round(soc, 1),
-            "power_w": round(voltage * current, 1),   # 음수면 회생 전력
+            "power_w": round(voltage * current, 1),  # 음수면 회생 전력
             "regen": current < 0,
         }
 
@@ -159,8 +197,10 @@ class BMSReader:
         vmin = struct.unpack(">H", d[3:5])[0]
         vmin_cell = d[5]
         return {
-            "cell_v_max": vmax, "cell_v_max_no": vmax_cell,
-            "cell_v_min": vmin, "cell_v_min_no": vmin_cell,
+            "cell_v_max": vmax,
+            "cell_v_max_no": vmax_cell,
+            "cell_v_min": vmin,
+            "cell_v_min_no": vmin_cell,
             "cell_v_diff": vmax - vmin,
         }
 
@@ -171,8 +211,10 @@ class BMSReader:
             return None
         d = f[0]
         return {
-            "temp_max": d[0] - TEMP_OFFSET, "temp_max_no": d[1],
-            "temp_min": d[2] - TEMP_OFFSET, "temp_min_no": d[3],
+            "temp_max": d[0] - TEMP_OFFSET,
+            "temp_max_no": d[1],
+            "temp_min": d[2] - TEMP_OFFSET,
+            "temp_min_no": d[3],
         }
 
     def read_mos(self):
@@ -211,13 +253,13 @@ class BMSReader:
         frames = self._request(DID_CELL_V, n_frames=n_frames)
         cells = {}
         for d in frames:
-            fno = d[0]                       # 1부터 시작 (실측 확인)
+            fno = d[0]  # 1부터 시작 (실측 확인)
             base = (fno - 1) * 3
             for i in range(3):
                 cell_no = base + i + 1
                 if cell_no > cell_count:
                     break
-                mv = struct.unpack(">H", d[1 + i * 2: 3 + i * 2])[0]
+                mv = struct.unpack(">H", d[1 + i * 2 : 3 + i * 2])[0]
                 cells[cell_no] = mv
         return cells if cells else None
 
@@ -262,8 +304,8 @@ class BMSReader:
                 (dangers if level == 2 else warnings).append(desc)
         return {
             "fault_code": d[7] if len(d) > 7 else 0,
-            "warnings": warnings,   # level 1
-            "dangers": dangers,     # level 2
+            "warnings": warnings,  # level 1
+            "dangers": dangers,  # level 2
             "ok": not warnings and not dangers,
         }
 
@@ -277,39 +319,60 @@ class BMSReader:
             else:
                 a = 0.2
                 self._efficiency_km_per_ah = (
-                    a * km_per_ah + (1 - a) * self._efficiency_km_per_ah)
+                    a * km_per_ah + (1 - a) * self._efficiency_km_per_ah
+                )
 
     def estimate_range_km(self, remain_ah: float):
         """잔여용량(회생 반영됨) × 학습 전비 → 남은 주행거리(km)."""
         if self._efficiency_km_per_ah is None:
-            return None   # 아직 학습 전
+            return None  # 아직 학습 전
         return round(remain_ah * self._efficiency_km_per_ah, 1)
 
     # -- 통합 스냅샷 ------------------------------------------------------
     def read_fast(self):
         """빠른 그룹 (2~5Hz 권장): 전압/전류/SOC + 상태/잔여용량."""
         vi = self.read_soc_vi()
+        vi_time = time.monotonic()
         mos = self.read_mos()
         out = {}
+        received = {}
         if vi:
             out.update(vi)
+            received.update({key: vi_time for key in vi})
         if mos:
             out.update(mos)
+            received.update({key: time.monotonic() for key in mos})
             rng = self.estimate_range_km(mos["remain_ah"])
             if rng is not None:
                 out["range_km"] = rng
+                received["range_km"] = time.monotonic()
+        out["_received"] = received
         return out
 
     def read_slow(self):
         """느린 그룹 (0.5~1Hz): 셀전압/온도/편차/밸런싱/상태정보."""
         out = {}
-        for fn in (self.read_cell_minmax, self.read_temp_minmax,
-                   self.read_status, self.read_balance):
+        received = {}
+        for fn in (
+            self.read_cell_minmax,
+            self.read_temp_minmax,
+            self.read_status,
+            self.read_balance,
+        ):
             r = fn()
             if r:
                 out.update(r)
+                received.update({key: time.monotonic() for key in r})
         out["cells"] = self.read_cell_voltages()
         out["cell_temps"] = self.read_cell_temps()
+        received.update(
+            {
+                key: time.monotonic()
+                for key in ("cells", "cell_temps")
+                if out[key] is not None
+            }
+        )
+        out["_received"] = received
         return out
 
     def read_alarms(self):
@@ -320,6 +383,7 @@ class BMSReader:
 # ---- 단독 실행 테스트 ----------------------------------------------------
 if __name__ == "__main__":
     import json
+
     print("BMSReader 테스트 시작 (Ctrl+C 종료)")
     with BMSReader("can0") as bms:
         try:

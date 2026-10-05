@@ -17,7 +17,9 @@ apt-get install -y wireguard python3-aiohttp sqlite3
 
 echo "==> 2/4 코드 배치 -> $HOME_DIR"
 install -o "$USER_NAME" -g "$USER_NAME" -m 644 \
-  "$REPO/server/telemetry_server.py" "$REPO/server/dashboard.html" "$HOME_DIR/"
+  "$REPO/server/telemetry_server.py" "$REPO/server/dashboard.html" \
+  "$REPO/server/research_store.py" "$REPO/server/research_dashboard.html" \
+  "$REPO/shared/telemetry_protocol.py" "$HOME_DIR/"
 
 echo "==> 3/4 환경파일"
 if [[ ! -f /etc/default/unimotors ]]; then
