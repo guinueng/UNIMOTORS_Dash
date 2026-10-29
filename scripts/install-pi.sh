@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  UNIMOTORS Raspberry Pi 자동 세팅 (install-pi.sh v2)
+#  UNIMOTORS Raspberry Pi 자동 세팅 (install-pi.sh v3)
 #
 #  링크 한 줄 설치:
 #    curl -fsSL <BASE_URL>/scripts/install-pi.sh | bash -s -- --role demo --base-url <BASE_URL>
@@ -8,7 +8,7 @@
 #    bash install-pi.sh --role demo --src .
 #
 #  역할(--role)
-#    demo : 가상 주행 계기판 (demo_sim.py + gps_server.py, 서버로 vehicle=demo 전송)
+#    demo : 가상 주행 계기판 (demo_sim.py + gps_server.py v7 + race_runtime.py, 서버로 vehicle=demo 전송)
 #    car  : 실차 수집기 (gps_server.py + bms_reader.py + backfill.py + lte_auto.sh)
 #
 #  하는 일 (마스터 문서 V6 37장을 자동화)
@@ -25,7 +25,7 @@
 # =====================================================================
 set -euo pipefail
 
-SCRIPT_VERSION="v2"
+SCRIPT_VERSION="v3"
 ROLE="demo"
 BASE_URL="${UNIMOTORS_BASE_URL:-}"
 SRC_DIR=""
@@ -221,10 +221,14 @@ fi
 #  2. 코드 내려받기
 # ---------------------------------------------------------------------
 step "코드 내려받기 → $HOME_DIR"
+# v7 계기판 = gps_server.py + race_runtime.py + driver_dashboard.html + telemetry_protocol.py
+#   (install-vehicle.sh 와 같은 평면 배치: 모두 홈 폴더 한 곳에 둔다)
+V7_FILES=(vehicle/gps_server.py vehicle/race_runtime.py vehicle/driver_dashboard.html
+          shared/telemetry_protocol.py)
 if [ "$ROLE" = "demo" ]; then
-  FILES=(vehicle/gps_server.py vehicle/demo_sim.py)
+  FILES=("${V7_FILES[@]}" vehicle/demo_sim.py)
 else
-  FILES=(vehicle/gps_server.py vehicle/bms_reader.py vehicle/backfill.py deploy/vehicle/lte_auto.sh)
+  FILES=("${V7_FILES[@]}" vehicle/bms_reader.py vehicle/backfill.py deploy/vehicle/lte_auto.sh)
 fi
 
 fetch_one() {               # fetch_one 레포경로 대상경로

@@ -4,8 +4,8 @@
 > `data.` 도메인)으로 태블릿에서 실시간 연동을 시연하는 데모 기기의 세팅 기록 (2026-10-29).
 > 코드: [`vehicle/demo_sim.py`](../vehicle/demo_sim.py) · 설치: [`scripts/install-pi.sh`](../scripts/install-pi.sh)
 >
-> ⚠️ 이 장은 **main 브랜치의 `vehicle/gps_server.py`(v6)** 기준이다. PR #1(V7 RaceRuntime)이 병합되면
-> 계기판이 `driver_dashboard.html` + RaceRuntime 구조로 바뀌므로 demo_sim 도 그에 맞춘 개정이 필요하다.
+> `demo_sim.py` v2 는 gps_server 버전을 자동 감지한다: **v7(RaceRuntime)** 이면 가상 센서 모드(37-5-1),
+> v6 이면 아래 37-5 의 v1 방식으로 동작한다. 설치 스크립트 v3 는 v7 파일 묶음을 받는다.
 
 ---
 
@@ -36,7 +36,7 @@
 | OS | Raspberry Pi OS 64-bit **데스크톱** (Debian 13 trixie, Wayland / labwc) |
 | 호스트명 | `Unimotors-Demo` |
 | 계정 | **`unimotors-demo`** ⚠️ 다른 Pi(`unimotors`)와 다름 → 경로가 `/home/unimotors-demo/` |
-| 홈 폴더 파일 | `demo_sim.py`, `gps_server.py` (같은 폴더 필수) |
+| 홈 폴더 파일 | `demo_sim.py`, `gps_server.py` (v7: + `race_runtime.py`, `driver_dashboard.html`, `telemetry_protocol.py`) — 같은 폴더 필수 |
 
 > ⚠️ **10-5 / 24-12-1 "DSI LCD 모델 확인 필요" 항목 해소**: 이 LCD는 trixie 기본 설정
 > (`display_auto_detect=1`)로 바로 잡힌다. 차량 Pi(3B+) 이관 시에도 같은 이미지를 쓰면 된다.
@@ -127,6 +127,28 @@ python3 ~/demo_sim.py --osrm "lat,lon;lat,lon;…"   # 다른 코스 생성 (인
 주요 옵션: `--soc` 시작 SOC, `--soc-floor` 교체 기준, `--ambient` 외기온도, `--gps-noise` GPS 노이즈(m),
 `--start-wait` 출발 전 대기, `--vehicle` 서버 표시 ID, `--server` 업로드 주소.
 서버 토큰을 바꿨다면 `UNIMOTORS_TOKEN` 환경변수(또는 `/etc/default/unimotors`).
+
+### 37-5-1. v2 — v7(RaceRuntime) 가상 센서 모드
+
+v7 에서는 계기판 값을 `RaceRuntime` 이 계산하므로, demo_sim 은 **상태를 직접 쓰지 않고 센서 원본만 넣는다.**
+그래서 랩 판정·에너지 적분·예산·경고·CSV·ACK 전송이 실차와 같은 코드를 탄다.
+
+| 항목 | 값 |
+|---|---|
+| 입력 | GPS 10Hz `update_gps()` · BMS 3Hz `update_bms()` (Daly fast 주기와 동일) |
+| 극성 | `current_sign=+1` 고정 (가상 차량은 + = 방전으로 값을 만든다. 실차 Daly 극성과 무관) |
+| 경기 | 시작 시 `new_race()` → 내구 프로필(`total_laps` 기본 30, 사용 가능 Wh = OCV 적분(SOC 하한~시작 SOC)) → `RACE` |
+| 출발선 | 코스 s=20 m 지점, 진행 방향 수직 20 m 폭. 출발 직후 1랩 계측이 시작된다 |
+| 배터리 교체 | SOC 하한 도달 시 `new_race()` 로 새 경기(segment) |
+| 화면 | `/` = 운전자 화면(`driver_dashboard.html`, 헤더에 DEMO 배지 — 메모리에서만 주입), `/legacy` = 기존 화면 + 랩 오버레이 |
+| 추가 옵션 | `--laps N` 목표 랩, `--sample-rate 초` CSV/전송 표본 주기 (기본 실차와 같은 0.2 s) |
+
+검증 (400 m 시험 코스, 로컬 v7 서버): 시뮬레이터 랩 37.7 / 38.6 s ↔ 런타임 BEST 37.65 / LAST 38.63 s 일치,
+`energy_quality=measured`, 서버 `online:["demo"]`, 800×480 넘침 없음.
+
+> ⚠️ **데이터량 (PR #1 공통, 데모 고유 아님)**: v7 표본 1건이 약 **3.2 KB**(CSV) / **4.3 KB**(전송 JSON) —
+> `meta` 에 프로필 전체·센서 age·health 가 매 표본 반복된다. 5Hz 기준 **CSV ≈ 60 MB/h, 업링크 ≈ 78 MB/h**
+> (v6 는 2Hz·32필드). LTE 요금제·SD 수명 검토 필요 → PR #1 코멘트에 기록.
 
 ## 37-6. 자동 실행 (서비스 + Wayland 키오스크)
 
@@ -239,7 +261,7 @@ bash install-pi.sh --role demo --src .
 | 단계 | 내용 |
 |---|---|
 | 1 | APT 저장소 HTTPS 전환 → `apt-get update -y` → `apt-get upgrade -y` (기존 설정 유지, 재시도 3회) → 패키지 |
-| 2 | `vehicle/*.py` 내려받기 (기존 파일 타임스탬프 백업) |
+| 2 | 코드 내려받기 — v7 묶음 `gps_server.py` `race_runtime.py` `driver_dashboard.html` `telemetry_protocol.py` + 역할별 파일 (기존 파일 타임스탬프 백업) |
 | 3 | systemd 서비스 생성 (계정명·홈 경로 자동 감지) |
 | 4 | Wayland 키오스크 autostart + 화면 꺼짐 해제 |
 | 5 | 서버 토큰 `/etc/default/unimotors` (선택, 입력 숨김) |
@@ -257,4 +279,6 @@ bash install-pi.sh --role demo --src .
 - [ ] 서버 `dashboard.html` 에 CARTO 키 적용 확인
 - [ ] (선택) 서버 `VEHICLE_NAMES` 에 `"demo": "데모 차량"` 추가
 - [x] `demo_sim.py` · `install-pi.sh` 레포 반영 (이 장)
+- [x] demo_sim v2 / install-pi v3 — v7 RaceRuntime 대응 (PR #1 브랜치)
+- [ ] PR #1 병합 후 데모 Pi 재설치(`install-pi.sh --role demo`) → LCD 운전자 화면·태블릿 확인
 - [ ] 데모 종료 후 `demo` 데이터 정리 여부 결정 (22-B-3)

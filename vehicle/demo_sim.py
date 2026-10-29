@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""UNIMOTORS 계기판 데모 시뮬레이터 (demo_sim.py v1).
+"""UNIMOTORS 계기판 데모 시뮬레이터 (demo_sim.py v2).
 
 실제 차량 대신 '가상 차량'을 실제 도로 폐루프 위에서 달리게 하고,
 그 값을 기존 gps_server.py 파이프라인 그대로 흘려보낸다.
+
+v2: gps_server 가 v7(RaceRuntime) 구조면 자동으로 '가상 센서 모드'로 동작한다.
+    상태(state)를 직접 쓰지 않고 GPS 10Hz·BMS 3Hz 원본값을 RaceRuntime 에 넣으므로
+    랩 판정(출발선 교차)·에너지 적분·경고·CSV·ACK 전송이 실차와 같은 코드 경로를 탄다.
+    운전자 화면은 / (driver_dashboard.html + DEMO 배지), 기존 화면은 /legacy.
+    v6 gps_server 와 함께 두면 v1 방식(state 직접 갱신)으로 동작한다.
 
   - LCD 계기판   : gps_server 의 계기판 HTML + SSE (localhost:8080) 그대로 사용
                    + 랩 정보 오버레이(LAP / 현재 랩타임 / LAST / BEST / DEMO 배지)
@@ -42,6 +48,7 @@ import time
 import types
 import urllib.request
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 KST = timezone(timedelta(hours=9))
 G = 9.80665
@@ -532,11 +539,14 @@ LAP_BLOCK = """
   function _lf(x){ if(x==null) return "--:--.-"; const m=Math.floor(x/60);
     return m+":"+(x-m*60).toFixed(1).padStart(4,"0"); }
   function onLap(s){
-    if(s.lap==null) return;
-    document.getElementById("dlapn").textContent="LAP "+s.lap;
-    document.getElementById("dlapt").textContent=_lf(s.lap_time);
-    document.getElementById("dlastv").textContent=_lf(s.last_lap);
-    document.getElementById("dbestv").textContent=_lf(s.best_lap);
+    const lt=s.lap_timing;   // v7: RaceRuntime 이 출발선 통과로 계산한 값
+    const n=lt?lt.number:s.lap, cur=lt?lt.current:s.lap_time;
+    const last=lt?lt.last:s.last_lap, best=lt?lt.best:s.best_lap;
+    if(n==null) return;
+    document.getElementById("dlapn").textContent="LAP "+n;
+    document.getElementById("dlapt").textContent=_lf(cur);
+    document.getElementById("dlastv").textContent=_lf(last);
+    document.getElementById("dbestv").textContent=_lf(best);
   }
 </script>
 """
@@ -599,6 +609,40 @@ def dry_run(args):
           f"{(args.soc - car.soc) / 100 * PACK['capacity_ah']:.2f} Ah")
 
 
+def pack_wh_between(soc_lo, soc_hi):
+    """SOC 구간의 팩 에너지 (OCV 곡선 적분, Wh)."""
+    lo, hi = max(0.0, soc_lo), min(100.0, soc_hi)
+    n = max(1, int((hi - lo) * 4))
+    step = (hi - lo) / n
+    return sum(PACK["series"] * interp_table(PACK["ocv"], lo + (i + 0.5) * step)
+               for i in range(n)) * PACK["capacity_ah"] * step / 100.0 if hi > lo else 0.0
+
+
+def lap_line_at(route, s, half_width=10.0):
+    """경로 s(m) 지점에서 진행 방향에 수직인 출발선 [[lat,lon],[lat,lon]] (폭 2×half_width)."""
+    lat, lon, hdg, _, _, _ = route.at(s)
+    th = math.radians(hdg + 90.0)
+    dn, de = math.cos(th) * half_width, math.sin(th) * half_width
+    return [[round(lat + dn / route.ky, 7), round(lon + de / route.kx, 7)],
+            [round(lat - dn / route.ky, 7), round(lon - de / route.kx, 7)]]
+
+
+LINE_S = 20.0   # m. 출발선을 출발점 20m 앞에 두어 출발 직후 1랩 계측이 시작되게 한다
+
+
+def demo_profile(args, route, soc):
+    usable = pack_wh_between(args.soc_floor, soc)
+    return dict(
+        event="endurance", confirmed=True, total_laps=args.laps,
+        usable_remaining_wh=round(usable, 1), reserve_wh=round(min(150.0, usable * 0.05), 1),
+        lap_line=lap_line_at(route, LINE_S), direction=0,
+        lap_min_seconds=30, lap_departure_m=50,
+        calibration_id="demo-sim", calibration_verified=True,
+        source_version="demo_sim v2 (synthetic)",
+        course_version=f"demo-loop-{route.L:.0f}m",
+    )
+
+
 def serve(args):
     # pyserial 이 없어도 gps_server 를 불러올 수 있게 (데모는 시리얼을 안 씀)
     try:
@@ -609,6 +653,8 @@ def serve(args):
     import gps_server as gs
 
     route = make_route(args)
+    if hasattr(gs, "RaceRuntime"):
+        return serve_v7(args, gs, route)
 
     # --- gps_server 설정 덮어쓰기 (원본 파일은 수정하지 않음) ---
     gs.VEHICLE_ID = args.vehicle
@@ -686,6 +732,115 @@ def serve(args):
         print("\n종료"); srv.shutdown()
 
 
+DEMO_BADGE = ('<span style="font-size:13px;color:#50a0ff;border:1px solid #2a4a66;'
+              'border-radius:6px;padding:1px 8px;letter-spacing:.15em">DEMO</span>')
+
+
+def serve_v7(args, gs, route):
+    """v7 (RaceRuntime) 구조: 상태를 직접 쓰지 않고 '가상 센서 원본'을 런타임에 넣는다.
+    랩 판정·에너지 적분·경고·CSV·ACK 전송은 실차와 똑같은 코드 경로를 탄다."""
+    gs.VEHICLE_ID = args.vehicle
+    gs.UPLOAD_ENABLED = not args.no_upload
+    if args.server:
+        gs.SERVER_WS_URL = args.server
+    tok = os.environ.get("UNIMOTORS_TOKEN")
+    if tok:
+        gs.UPLOAD_TOKEN = tok
+    gs.LOG_DIR = os.path.expanduser(args.log_dir)
+    gs.SSE_RATE = 0.1                # 3B+ 로컬 LCD → 10Hz
+    gs.UPLOAD_RATE = 0.5             # 서버 2Hz (실차와 동일)
+    if args.sample_rate:
+        gs.TELEM_LOG_RATE = args.sample_rate
+    gs.DASHBOARD_HTML = patch_dashboard_html(gs.DASHBOARD_HTML)   # /legacy 비교용
+
+    state_dir = os.environ.get("UNIMOTORS_STATE_DIR", os.path.join(gs.LOG_DIR, "state"))
+
+    def epoch():
+        return "demo-" + datetime.now(KST).strftime("%Y%m%d_%H%M%S")
+
+    # 데모 차량은 '+ = 방전' 으로 값을 만들므로 극성 +1 고정 (실차 Daly 극성과 무관)
+    rt = gs.RaceRuntime(state_dir, vehicle=gs.VEHICLE_ID, battery_epoch=epoch(),
+                        persist_interval=float(os.environ.get("UNIMOTORS_PERSIST_SECONDS", "1")),
+                        current_sign=1)
+    gs.RUNTIME = rt
+
+    def start_race(soc, tag):
+        rt.new_race(epoch())                 # 데모는 매번 새 경기 (복구 후보 없음)
+        rt.configure(demo_profile(args, route, soc))
+        rt.set_phase("RACE")
+        gs.SESSION_ID = rt.segment
+        print(f"[DEMO] {tag} → 새 경기 segment {rt.segment[:8]} · "
+              f"사용 가능 {rt.run['profile']['usable_remaining_wh']:.0f} Wh · "
+              f"목표 {args.laps}랩", flush=True)
+
+    def on_lap(L):
+        avg = L["dist_km"] / (L["time"] / 3600.0)
+        print(f"[LAP] {L['lap']:>3}  {fmt_lap(L['time'])}  평속 {avg:4.1f} km/h  "
+              f"{L['wh']:.0f} Wh ({L['wh'] / L['dist_km']:.0f} Wh/km)  "
+              f"SOC {L['soc']:.1f}%  {L['temp']:.1f}°C  "
+              f"| 런타임 랩 {rt.run['lap_count']}", flush=True)
+
+    car = DemoCar(route, soc_start=args.soc, ambient=args.ambient, fade=args.fade,
+                  soc_floor=args.soc_floor, gps_noise=args.gps_noise, seed=args.seed,
+                  on_lap=on_lap,
+                  on_swap=lambda: start_race(args.soc, "배터리 교체(SOC 하한)"))
+    start_race(args.soc, "데모 시작")
+
+    stop = gs.STOP
+
+    def sim_loop():
+        t_prev = time.monotonic(); t0 = t_prev; t_bms = 0.0
+        while not stop.wait(0.1):            # GPS 10Hz (실차 GNSS 와 같은 주기)
+            now = time.monotonic()
+            el = min(0.5, now - t_prev); t_prev = now
+            n = max(1, int(math.ceil(el / 0.05)))
+            for _ in range(n):
+                car.step(el / n, hold=(now - t0) < args.start_wait)
+            g = car.gps_view()
+            rt.update_gps(dict(g, fix=True))
+            if now - t_bms >= 0.33:          # Daly fast 주기 (bms_poller 와 동일)
+                b = car.bms_view()
+                for k in ("power_w", "regen", "state"):
+                    b.pop(k, None)
+                rt.update_bms(b)
+                t_bms = now
+
+    class DemoHandler(gs.Handler):
+        def _html(self, legacy=False):
+            if legacy:
+                return super()._html(legacy=True)
+            page = Path(gs.__file__).with_name("driver_dashboard.html").read_text(encoding="utf-8")
+            b = page.replace('<span id="phase">', DEMO_BADGE + '<span id="phase">', 1).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+    print(f"UNIMOTORS DEMO v2 (v7 runtime {gs.VERSION}): http://0.0.0.0:{gs.PORT}  "
+          f"vehicle={gs.VEHICLE_ID}")
+    print(f"코스 {route.L:.0f} m · 시작 SOC {args.soc:.0f}% · 랩당 감속 {args.fade * 100:.1f}% · "
+          f"출발선 s={LINE_S:.0f} m")
+    print(f"서버 전송: {'ON -> ' + gs.SERVER_WS_URL if gs.UPLOAD_ENABLED else 'OFF'}"
+          f"{'' if gs.WS_AVAILABLE or not gs.UPLOAD_ENABLED else ' (websocket-client 미설치!)'}")
+    print(f"로그: {gs.LOG_DIR} · 상태: {state_dir} · 기존 화면: /legacy", flush=True)
+    workers = [threading.Thread(target=t, daemon=True)
+               for t in (sim_loop, gs.csv_logger, gs.uploader)]
+    for w in workers:
+        w.start()
+    srv = gs.ThreadingHTTPServer(("0.0.0.0", gs.PORT), DemoHandler)
+    try:
+        srv.serve_forever(poll_interval=0.2)
+    except KeyboardInterrupt:
+        print("\n종료")
+    finally:
+        stop.set()
+        srv.server_close()
+        for w in workers:
+            w.join(timeout=5)
+        rt.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description="UNIMOTORS 계기판 데모 시뮬레이터")
     ap.add_argument("--vehicle", default=os.environ.get("DEMO_VEHICLE", "demo"),
@@ -706,6 +861,10 @@ def main():
                     help='웨이포인트로 코스 생성: "lat,lon;lat,lon;…" (인터넷 필요)')
     ap.add_argument("--save-route", default="demo_route.json")
     ap.add_argument("--log-dir", default="~/demo_logs")
+    ap.add_argument("--laps", type=int, default=30,
+                    help="v7: 경기 목표 랩 수 (에너지 예산 계산용, 기본 30)")
+    ap.add_argument("--sample-rate", type=float, default=None,
+                    help="v7: CSV/전송 표본 주기 초 (기본: gps_server 설정, 실차 0.2)")
     ap.add_argument("--dry-run", type=int, default=0, metavar="LAPS",
                     help="실시간 없이 LAPS 랩을 계산해 요약만 출력")
     args = ap.parse_args()
