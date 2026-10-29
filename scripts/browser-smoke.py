@@ -92,22 +92,26 @@ def main():
                     usable_remaining_wh=1200,
                     reserve_wh=200,
                     source_version="synthetic QA",
+                    lap_line=[[35.001, 128.999], [35.001, 129.001]],
                 )
             )
             runtime.run["laps"] = [
                 dict(
-                    seconds=55,
+                    seconds=seconds,
                     wh=31.8,
                     complete=True,
                     formation=False,
                     energy_complete=True,
                     energy_revision=0,
                 )
+                for seconds in (55.0, 57.3)
             ]
             runtime.driver(
                 "driver1", dict(mode="base", brightness=1, contrast="normal")
             )
             runtime.set_phase("RACE")
+            # A lap in progress (started 83.4 s ago) for the driver lap clock.
+            runtime.lap_started = runtime.clock.monotonic() - 83.4
             fixture = dict(speed=42, danger=False, current=14)
             vehicle.RUNTIME, vehicle.STOP = runtime, stop
             vehicle.UPLOAD_TOKEN, vehicle.UPLOAD_ENABLED = "qa-local-only", True
@@ -161,6 +165,15 @@ def main():
                 page.wait_for_function(
                     "document.querySelector('#speed').textContent==='42'"
                 )
+                # Lap clock on the base screen: current lap, LAST (+delta) and BEST.
+                page.wait_for_function(
+                    "/^1:2\\d\\.\\d$/.test(document.querySelector('#contentValue').textContent)"
+                )
+                assert page.locator("#contentLabel").inner_text().startswith("LAP 13")
+                detail = page.locator("#contentDetail").inner_text()
+                assert "LAST 0:57.3 (+2.3)" in detail and "BEST 0:55.0" in detail, detail
+                # Technical recovery/quality text stays off the driver view.
+                assert "계측" not in page.locator("main").inner_text()
                 for mode in ("base", "endurance", "pit"):
                     if mode == "pit":
                         fixture["speed"] = 0
@@ -217,6 +230,8 @@ def main():
                 page.wait_for_function(
                     "document.querySelector('#banner').className==='danger'"
                 )
+                assert "danger" in page.locator("#cluster").get_attribute("class")
+                no_overflow(page)
                 page.screenshot(path=str(qa / "driver-warning.png"))
                 fixture["danger"] = False
                 pit_context = browser.new_context(
@@ -271,6 +286,7 @@ def main():
                         viewport="800x480",
                         checks=[
                             "base/endurance/pit",
+                            "lap clock current/last/best",
                             "same-driver settings",
                             "polarity UI and unchanged budget anchor",
                             "contrast",

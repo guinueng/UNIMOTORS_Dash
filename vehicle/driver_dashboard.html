@@ -5,18 +5,23 @@
 *{box-sizing:border-box}html,body{margin:0;height:100%;font-family:system-ui,"Malgun Gothic",sans-serif;background:#0a1015;color:#e9f0f1}
 button,input,select,textarea{font:inherit}button{cursor:pointer;color:inherit;background:#173340;border:1px solid #3c5864;border-radius:5px;padding:7px 14px}
 button:focus-visible,input:focus-visible{outline:3px solid #66ded1}button[aria-pressed=true]{color:#0a1015;background:#8fdbbc}
-#cluster{height:100%;display:grid;grid-template-rows:42px minmax(160px,1fr) 74px 32px 38px;max-width:1600px;margin:auto}
+#cluster{height:100%;display:grid;grid-template-rows:42px minmax(150px,1fr) 74px 30px 50px;max-width:1600px;margin:auto}
+#cluster.danger{grid-template-rows:76px minmax(120px,1fr) 74px 30px 50px;box-shadow:inset 0 0 0 5px #ff5b5b}
 header{padding:8px 20px;background:#18323e;font-size:18px;display:flex;align-items:center;justify-content:space-between}
 #alert{max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#banner.warning{background:#493812;color:#ffd470}#banner.danger{background:#602323}
+#banner.warning{background:#493812;color:#ffd470}
+#banner.danger{background:#8f1d1d;color:#fff;font-size:30px;font-weight:750;animation:dangerBlink 1s steps(2,start) infinite}
+#banner.danger #phase{font-size:18px;font-weight:500}
+@keyframes dangerBlink{50%{background:#3d0c0c}}@media (prefers-reduced-motion:reduce){#banner.danger{animation:none}}
 main{display:grid;grid-template-columns:43% 57%;padding:12px 24px;align-items:center;min-height:0}
 .speed{text-align:center}#speed{font-size:clamp(112px,30vh,168px);font-weight:750;line-height:1.05;font-variant-numeric:tabular-nums}
 .unit{font-size:24px;color:#c5d2d9}.label{font-size:18px;color:#c5d2d9}.value{font-size:clamp(34px,8vh,48px);font-weight:650;margin:5px 0}
 .detail{font-size:20px;margin:6px 0;line-height:1.4}.muted{color:#9aafba}.amber{color:#ffd470}
+.value.big{font-size:clamp(46px,13vh,72px);font-variant-numeric:tabular-nums;line-height:1.05}.best{color:#c38bff}
 #metrics{margin:0 24px;display:grid;grid-template-columns:repeat(4,1fr);background:#18323e;border-radius:5px;align-items:center;text-align:center}
 .metric strong{display:block;font-size:25px}.metric span{font-size:15px;color:#c5d2d9}
 #status{padding:5px 24px;display:flex;justify-content:space-between;font-size:15px;white-space:nowrap}
-nav{display:flex;gap:6px;justify-content:center;align-items:center}nav button{padding:4px 14px;font-size:14px}
+nav{display:flex;gap:8px;justify-content:center;align-items:center}nav button{padding:6px 18px;font-size:18px;min-height:42px}
 #order{font-size:18px;padding:8px 10px;background:#173340;border-left:3px solid #66ded1;margin-top:9px;display:none}
 #order button{padding:3px 9px;font-size:15px;float:right}#pitValues{font-size:18px}
 html[data-contrast=high] .muted,html[data-contrast=high] .label,html[data-contrast=high] .unit{color:#fff}
@@ -78,7 +83,7 @@ for(const b of document.querySelectorAll('[data-mode]'))b.addEventListener('clic
 function render(){
  const stale=performance.now()-lastMessage>1500;
  if(!data||stale){for(const id of ['speed','soc','power','voltage','temp'])$(id).textContent='--';
-  $('banner').className='warning';$('alert').textContent=data?'계기 연결 지연 · 현재 값 확인 불가':'센서 수신 대기';
+  $('banner').className='warning';$('cluster').classList.remove('danger');$('alert').textContent=data?'계기 연결 지연 · 현재 값 확인 불가':'센서 수신 대기';
   $('recordStatus').textContent='현재 기록 상태 확인 불가';$('order').style.display='none';return;}
  const s=data,p=s.profile||{},h=s.health||{},b=s.budget||{};
  const driverRevision=JSON.stringify([s.driver_id,s.driver_settings]);
@@ -90,14 +95,22 @@ function render(){
  $('voltage').textContent=numeric(s.voltage,1);$('temp').textContent=numeric(s.temp_max,0);
  $('phase').textContent=labels[s.phase]||s.phase;
  const warning=(s.warnings||[])[0];$('banner').className=warning?(warning.priority===0?'danger':'warning'):'';
+ $('cluster').classList.toggle('danger',warning?.priority===0);
  $('alert').textContent=warning?warning.text:'UNIMOTORS · '+(s.driver_id||'driver')+(s.replay?' · 로그 재생':'');
  $('alert').title=(s.warnings||[]).map(x=>x.text).join(' · ');
  $('sensorStatus').textContent='GPS '+age(s.gps_age)+' · BMS '+age(s.bms_age)+' · '+(s.time_quality==='trusted'?'시각 확인':'시각 미확정');
  $('recordStatus').textContent=(h.storage_ok?'로컬 기록':'기록 실패')+' · 미전송 '+(h.backlog??'--')+' · 피트 '+(h.pit_age==null?'대기':age(h.pit_age));
  const recoveryNames={new:'새 경기',candidate:'이전 기록 있음 · 정차 후 확인',automatic:'이전 경기 자동 복원',manual:'이전 경기 수동 복원',battery_check_required:'배터리 사용 구간 확인 필요'};
  const qualityNames={waiting:'계측 대기',measured:'유효 계측 누적',partial:'일부 미계측',unverified_basis:'부호·보정 기준 확인 필요'};
- $('recovery').textContent=(recoveryNames[s.recovery]||s.recovery)+' · '+(qualityNames[s.energy_quality]||'계측 품질 미확정');
+ const techStatus=(recoveryNames[s.recovery]||s.recovery)+' · '+(qualityNames[s.energy_quality]||'계측 품질 미확정');
  $('recovery').title='미계측 간격 '+numeric(s.gap_seconds,1)+'s · 유효 적분 '+numeric(s.measured_seconds,1)+'s';
+ // 운전자 화면(기본/내구)에는 행동할 수 있는 정보만: 복원 확인이 필요할 때만 짧게 표시, 나머지 기술 상태는 정비 모드
+ const needsStop=s.recovery==='candidate'||s.recovery==='battery_check_required';
+ const lt=s.lap_timing||{};
+ const lapClock=v=>typeof v==='number'&&Number.isFinite(v)?Math.floor(v/60)+':'+(v%60).toFixed(1).padStart(4,'0'):'--:--.-';
+ const lastText='LAST '+lapClock(lt.last)+(lt.last_delta==null?'':lt.last_delta<0.05?' ★':' (+'+numeric(lt.last_delta,1)+')');
+ let secondary='',secondaryAmber=false;
+ $('contentValue').classList.remove('big');
  $('pitValues').classList.toggle('hidden',mode!=='pit');
  $('contentValue').classList.toggle('amber',mode==='endurance'&&b.recent_wh_lap!=null&&b.recent_wh_lap>b.target_wh_lap);
  if(s.phase==='CHANGE'||s.phase==='RESTART'){$('contentLabel').textContent=(s.phase==='CHANGE'?'교체 경과':'재출발 경과')+' · 팀 참고 타이머';
@@ -107,9 +120,20 @@ function render(){
   $('contentDetail').textContent='설정 참고 '+numeric(allowance,0)+'s · 공식 사인·절차 확인';
  }else if(mode==='endurance'){$('contentLabel').textContent='팀 추정 랩'+(s.lap_uncertain?' · 미확정':'');
   $('contentValue').textContent=(s.lap_count??'--')+' / '+(p.total_laps??'--');
-  $('contentDetail').textContent=b.target_wh_lap==null?'예산 설정·유효 랩 확인 필요':'최근 '+numeric(b.recent_wh_lap,1)+' / 목표 '+numeric(b.target_wh_lap,1)+' Wh/lap';
- }else{$('contentLabel').textContent=mode==='pit'?'측정 누적 소비 · 정비':'이번 경기 · 측정 누적 소비';
-  $('contentValue').textContent=numeric(s.used_wh,1)+' Wh';$('contentDetail').textContent=numeric(s.distance_km,2)+' km · '+(p.event||'practice')+(p.confirmed?'':' · 설정 미확정');}
+  $('contentDetail').textContent='최근 '+numeric(b.recent_wh_lap,1)+' / 목표 '+(b.target_wh_lap==null?'--':numeric(b.target_wh_lap,1))+' Wh/lap';
+  if(lt.line)secondary='LAP '+lapClock(lt.current)+' · '+lastText;
+ }else if(mode==='pit'){$('contentLabel').textContent='측정 누적 소비 · 정비';
+  $('contentValue').textContent=numeric(s.used_wh,1)+' Wh';$('contentDetail').textContent=numeric(s.distance_km,2)+' km · '+(p.event||'practice')+(p.confirmed?'':' · 설정 미확정');
+  secondary=techStatus;
+ }else if(lt.line){$('contentLabel').textContent='LAP '+(lt.number??'--')+(lt.interrupted||s.lap_uncertain?' · 미확정':'');
+  $('contentValue').textContent=lapClock(lt.current);$('contentValue').classList.add('big');
+  $('contentDetail').innerHTML='';$('contentDetail').append(lastText+' · ');
+  const best=document.createElement('span');best.className='best';best.textContent='BEST '+lapClock(lt.best);$('contentDetail').append(best);
+  secondary=numeric(s.used_wh,1)+' Wh · '+numeric(s.distance_km,2)+' km';
+ }else{$('contentLabel').textContent='이번 경기 · 측정 누적 소비';
+  $('contentValue').textContent=numeric(s.used_wh,1)+' Wh';$('contentDetail').textContent=numeric(s.distance_km,2)+' km';}
+ if(mode!=='pit'&&needsStop){secondary=recoveryNames[s.recovery];secondaryAmber=true;}
+ $('recovery').textContent=secondary;$('recovery').classList.toggle('amber',secondaryAmber);$('recovery').classList.toggle('hidden',!secondary);
  const checks={gps:'GPS',bms:'BMS',storage:'기록',space:'공간',profile:'프로파일',clock:'시각',recovery:'복원'};
  const checkText=Object.entries(s.preflight||{}).filter(([,ok])=>!ok).map(([key])=>checks[key]||key).join('·');
  const t=s.trends||{},e=s.external||{};

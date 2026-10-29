@@ -1523,10 +1523,36 @@ class RaceRuntime:
                 preflight=checks,
                 external=self._external_comparison(bms),
                 race_elapsed=self._elapsed("race"),
+                lap_timing=self._lap_timing(now, p),
                 lap_uncertain=self.run["lap_uncertain"],
                 driver_settings=self.run["drivers"].get(self.run["driver_id"], {}),
                 trends=self.trend_summary(),
             )
+
+    def _lap_timing(self, now, p):
+        """Display-only lap clock for the driver screen (not part of the CSV/WS schema).
+
+        current: seconds since the last start-line crossing in this process. None before the
+        first crossing, after a restore, or when no lap line is configured — a lap that began
+        before a restart cannot be timed honestly, so it is not reconstructed.
+        last/best: complete, non-formation laps only (interrupted laps are excluded).
+        """
+        laps = [x for x in self.run["laps"] if not x.get("formation")]
+        done = [x for x in laps if x.get("complete")]
+        current = None
+        if p.get("lap_line") and self.lap_started is not None and now >= self.lap_started:
+            current = now - self.lap_started
+        best = min((x["seconds"] for x in done), default=None)
+        last = done[-1]["seconds"] if done else None
+        return dict(
+            line=bool(p.get("lap_line")),
+            number=self.run["lap_count"] + 1,
+            current=current,
+            interrupted=bool(self.interrupted_lap),
+            last=last,
+            best=best,
+            last_delta=None if last is None or best is None else last - best,
+        )
 
     def trend_summary(self):
         if len(self.trends) < 2:
