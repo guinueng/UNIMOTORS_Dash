@@ -7,6 +7,8 @@
 > `demo_sim.py` v2.1은 **v7(RaceRuntime)** 가상 센서 모드(37-5-1)를 지원한다.
 > 설치 스크립트 v3.1은 공통 모듈·운전자 HTML을 함께 받고, 임시 폴더에서 v7 import와 계산을 확인한 뒤 설치한다.
 > v6 직접 실행의 호환 경로는 유지하지만 새 설치 대상은 v7이다.
+>
+> 2026-11-01 추가: 설치 파일에 `claude_dashboard.html`도 포함한다. 화면에서 v7 연구형 / Claude 클래식을 선택하며 `/legacy`도 새 클래식 테마를 연다. [Project CARS 수신 및 테마 안내](24-pcars-and-themes.md).
 
 ---
 
@@ -37,7 +39,7 @@
 | OS | Raspberry Pi OS 64-bit **데스크톱** (Debian 13 trixie, Wayland / labwc) |
 | 호스트명 | `Unimotors-Demo` |
 | 계정 | **`unimotors-demo`** ⚠️ 다른 Pi(`unimotors`)와 다름 → 경로가 `/home/unimotors-demo/` |
-| 홈 폴더 파일 | `demo_sim.py`, `gps_server.py` (v7: + `race_runtime.py`, `driver_dashboard.html`, `telemetry_protocol.py`) — 같은 폴더 필수 |
+| 홈 폴더 파일 | `demo_sim.py`, `gps_server.py` (v7: + `race_runtime.py`, `driver_dashboard.html`, `claude_dashboard.html`, `telemetry_protocol.py`) — 같은 폴더 필수 |
 
 > ⚠️ **10-5 / 24-12-1 "DSI LCD 모델 확인 필요" 항목 해소**: 이 LCD는 trixie 기본 설정
 > (`display_auto_detect=1`)로 바로 잡힌다. 차량 Pi(3B+) 이관 시에도 같은 이미지를 쓰면 된다.

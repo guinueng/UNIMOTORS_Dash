@@ -1594,9 +1594,10 @@ class RaceRuntime:
             self.last_tick, self.last_tick_wall = now_m, now_w
             self.sequence += 1
             snap = self.snapshot()
+            measured = snap.get("capabilities", {}).get("battery_measurement", True)
             snap["energy_increment_wh"], snap["charge_increment_ah"] = (
-                self.increment_wh,
-                self.increment_ah,
+                self.increment_wh if measured else None,
+                self.increment_ah if measured else None,
             )
             self.increment_wh = self.increment_ah = 0.0
             self.trends.append(

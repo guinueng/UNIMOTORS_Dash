@@ -167,8 +167,11 @@ def main():
                 )
                 # Lap clock on the base screen: current lap, LAST (+delta) and BEST.
                 page.wait_for_function(
-                    "/^1:2\\d\\.\\d$/.test(document.querySelector('#contentValue').textContent)"
+                    "/^\\d+:[0-5]\\d\\.\\d$/.test(document.querySelector('#contentValue').textContent)"
                 )
+                clock_text = page.locator("#contentValue").inner_text()
+                minutes, seconds = clock_text.split(":")
+                assert int(minutes) * 60 + float(seconds) >= 83.4
                 assert page.locator("#contentLabel").inner_text().startswith("LAP 13")
                 detail = page.locator("#contentDetail").inner_text()
                 assert "LAST 0:57.3 (+2.3)" in detail and "BEST 0:55.0" in detail, detail
@@ -260,8 +263,16 @@ def main():
                 pit.screenshot(path=str(qa / "pit-research.png"), full_page=True)
                 # Existing UI is independently accessible for A/B comparison.
                 legacy = context.new_page()
+                legacy.on("pageerror", lambda e: failures.append(str(e)))
                 legacy.goto(driver_url + "/legacy")
                 assert "UNIMOTORS" in legacy.title()
+                legacy.wait_for_function("document.querySelector('#b0').textContent==='76'")
+                fixture["danger"] = True
+                legacy.wait_for_function("document.querySelector('#alarm').className==='crit'")
+                assert "시험 과열 경고" in legacy.locator("#alarm").inner_text()
+                legacy.screenshot(path=str(qa / "claude-bms-danger.png"))
+                fixture["danger"] = False
+                legacy.wait_for_function("document.querySelector('#alarm').className!== 'crit'")
                 # Existing EventSource sockets can survive CDP offline mode.
                 # Stop upstream emission as well to exercise the actual watchdog.
                 stop.set()
@@ -270,6 +281,9 @@ def main():
                     "document.querySelector('#speed').textContent==='--'"
                 )
                 assert "확인 불가" in page.locator("#alert").inner_text()
+                legacy.wait_for_function("document.querySelector('#speed').textContent==='--'")
+                assert legacy.locator("#b0").inner_text() == "--"
+                assert legacy.locator("#lapCurrent").inner_text() == "--:--.-"
                 page.screenshot(path=str(qa / "driver-disconnected.png"))
                 pit_context.set_offline(True)
                 pit.wait_for_function(

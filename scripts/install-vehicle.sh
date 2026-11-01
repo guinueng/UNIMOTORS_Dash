@@ -22,7 +22,7 @@ systemctl disable ModemManager 2>/dev/null || true
 echo "==> 2/6 코드 배치 -> $HOME_DIR"
 install -o "$USER_NAME" -g "$USER_NAME" -m 644 \
   "$REPO"/vehicle/gps_server.py "$REPO"/vehicle/bms_reader.py "$REPO"/vehicle/backfill.py \
-  "$REPO"/vehicle/race_runtime.py "$REPO"/vehicle/driver_dashboard.html \
+  "$REPO"/vehicle/race_runtime.py "$REPO"/vehicle/driver_dashboard.html "$REPO"/vehicle/claude_dashboard.html \
   "$REPO"/shared/telemetry_protocol.py "$HOME_DIR/"
 install -o "$USER_NAME" -g "$USER_NAME" -m 755 \
   "$REPO"/deploy/vehicle/lte_auto.sh "$REPO"/deploy/vehicle/kiosk.sh "$HOME_DIR/"

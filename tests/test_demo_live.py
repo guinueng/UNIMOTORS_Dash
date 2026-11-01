@@ -21,7 +21,7 @@ def test_flat_installed_demo_runs_v7_and_keeps_real_state_separate(tmp_path):
     installed = tmp_path / "installed"
     installed.mkdir()
     for name in ("vehicle/demo_sim.py", "vehicle/gps_server.py", "vehicle/race_runtime.py",
-                 "vehicle/driver_dashboard.html", "shared/telemetry_protocol.py"):
+                 "vehicle/driver_dashboard.html", "vehicle/claude_dashboard.html", "shared/telemetry_protocol.py"):
         shutil.copyfile(ROOT / name, installed / Path(name).name)
     real_state = tmp_path / "shared-state"
     real_state.mkdir()
@@ -70,6 +70,7 @@ def test_flat_installed_demo_runs_v7_and_keeps_real_state_separate(tmp_path):
             assert "synthetic" in snapshot["profile"]["source_version"]
             html = get(port, "/").decode("utf8")
             assert 'id="demoBadge"' in html and 'id="contentValue"' in html
+            assert 'id="gg"' in get(port, "/?theme=claude").decode("utf8")
             line = get(port, "/stream", line=True).decode("utf8")
             assert line.startswith("data: ")
             assert json.loads(line[6:])["race_session_id"] == snapshot["race_session_id"]

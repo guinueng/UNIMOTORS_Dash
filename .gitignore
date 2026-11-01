@@ -24,6 +24,7 @@ cloudflare.ini
 .pytest_cache/
 .ruff_cache/
 gps_logs/
+pcars_logs/
 backup/
 *.csv
 

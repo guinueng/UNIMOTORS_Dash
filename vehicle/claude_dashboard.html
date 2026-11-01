@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UNIMOTORS · Claude 클래식</title>
+<script>
+(()=>{const u=new URL(location.href),q=u.searchParams.get('theme'),saved=localStorage.getItem('unimotorsTheme');
+if(location.pathname==='/legacy')localStorage.setItem('unimotorsTheme','claude');
+else if(!q&&saved==='v7'){u.searchParams.set('theme','v7');location.replace(u);}else localStorage.setItem('unimotorsTheme','claude');})();
+</script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#090909;color:#fff;font-family:-apple-system,"Segoe UI","Malgun Gothic",sans-serif}
+#wrap{height:100%;max-width:1600px;margin:auto;display:grid;grid-template-rows:42px 36px minmax(110px,1fr) 52px 72px 30px}
+#alarm{padding:9px 18px;background:#171717;color:#bbb;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#alarm.warn{background:#4a3500;color:#ffcf5a}#alarm.crit{background:#720d0d;color:#fff;font-size:24px;font-weight:700}
+#top{display:flex;align-items:center;justify-content:space-between;padding:0 24px;color:#999;font-size:14px}
+select{background:#151b23;color:#c4dcff;border:1px solid #34475e;border-radius:5px;font:inherit;padding:5px}select:focus-visible{outline:3px solid #50a0ff}
+#demoBadge{color:#82b7ff;margin-left:12px}main{display:flex;align-items:center;justify-content:center;gap:5vw;min-height:0;padding:6px 20px}
+#speed-box{text-align:center;min-width:3ch}#speed{font-size:clamp(95px,31vh,230px);font-weight:700;line-height:.95;font-variant-numeric:tabular-nums;text-shadow:0 0 6vmin #50a0ff40}
+#unit{font-size:3.2vmin;color:#888;letter-spacing:.2em;margin-top:1vmin}
+#gg{width:28vmin;height:28vmin;max-width:260px;max-height:260px;border-radius:50%;position:relative;border:2px solid #282828;background:radial-gradient(circle,#141414,#0a0a0a)}
+.cross-h,.cross-v{position:absolute;background:#292929}.cross-h{left:0;right:0;top:50%;height:1px}.cross-v{top:0;bottom:0;left:50%;width:1px}
+#gdot{position:absolute;width:2.6vmin;height:2.6vmin;border-radius:50%;background:#50a0ff;left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 2vmin #50a0ff99}
+#gval{font-size:2.5vmin;color:#999;text-align:center;margin-top:4px}#heading{max-width:180px;text-align:center;color:#999}
+#compass{font-size:7vmin;font-weight:600;color:#50a0ff}#deg{font-size:3vmin}#context{font-size:2.4vmin;margin-top:10px;overflow-wrap:anywhere}
+#laps{text-align:center;font-variant-numeric:tabular-nums;font-size:3vmin;color:#bbb}#lapCurrent{font-size:5vmin;color:#fff;margin:0 12px}#best{color:#b886ff}
+#batt{display:grid;grid-template-columns:repeat(6,1fr);align-items:center;text-align:center;margin:0 24px;border-top:1px solid #282828;gap:8px}
+.v{font-size:4.5vmin;font-weight:600;font-variant-numeric:tabular-nums}.l{font-size:2vmin;color:#999;margin-top:3px}
+footer{display:flex;justify-content:space-between;align-items:center;padding:0 24px;color:#aaa;font-size:12px;gap:12px}
+html[data-contrast=high] .l,html[data-contrast=high] #gval,html[data-contrast=high] footer,html[data-contrast=high] #context{color:#fff}
+#order{color:#b2dec7}button{color:inherit;background:#173340;border:1px solid #608695;border-radius:4px;font:inherit;padding:4px 9px}
+@media(max-width:600px){#top{padding:0 10px}main{gap:4vw;padding:4px 8px}#heading{max-width:24vw}#batt{margin:0 10px;grid-template-columns:repeat(3,1fr)}#wrap{grid-template-rows:42px 36px minmax(100px,1fr) 52px 84px 30px}.l{font-size:10px}.v{font-size:19px}footer{padding:0 10px;font-size:10px}}
+</style></head><body>
+<div id="wrap">
+<div id="alarm" role="status">UNIMOTORS · 센서 수신 대기</div>
+<div id="top"><span><span id="clock">--:--:--</span><span id="demoBadge" hidden></span></span>
+<select id="theme" aria-label="테마 선택"><option value="v7">v7 연구형</option><option value="claude" selected>Claude 클래식</option></select></div>
+<main><div id="speed-box"><div id="speed">--</div><div id="unit">KM / H</div></div>
+<div><div id="gg"><div class="cross-h"></div><div class="cross-v"></div><div id="gdot" hidden></div></div><div id="gval">G --</div></div>
+<div id="heading"><div id="compass">--</div><div id="deg">방향 °</div><div id="context">센서 수신 대기</div></div></main>
+<section id="laps"><div>LAP <span id="lapNumber">--</span><strong id="lapCurrent">--:--.-</strong></div><div id="lapHistory">LAST --:--.- · BEST --:--.-</div></section>
+<section id="batt"><div><div class="v" id="b0">--</div><div class="l" id="l0">SOC %</div></div><div><div class="v" id="b1">--</div><div class="l" id="l1">VOLT</div></div>
+<div><div class="v" id="b2">--</div><div class="l" id="l2">AMP</div></div><div><div class="v" id="b3">--</div><div class="l" id="l3">TEMP °C</div></div>
+<div><div class="v" id="b4">--</div><div class="l" id="l4">REMAIN Ah</div></div><div><div class="v" id="b5">--</div><div class="l" id="l5">RANGE km</div></div></section>
+<footer><span id="sourceStatus">GPS -- · BMS --</span><span id="order" hidden><span id="orderText"></span> <button id="seen">확인</button></span><span id="recordStatus">기록 확인 중</span></footer>
+</div><script>
+'use strict';
+const $=id=>document.getElementById(id),num=(v,d=1)=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(d):'--';
+const lap=v=>typeof v==='number'&&Number.isFinite(v)?Math.floor(v/60)+':'+(v%60).toFixed(1).padStart(4,'0'):'--:--.-';
+let data=null,lastMessage=-Infinity,command=null;
+$('theme').onchange=()=>{localStorage.setItem('unimotorsTheme',$('theme').value);const u=new URL(location.href);u.pathname='/';u.searchParams.set('theme',$('theme').value);location.assign(u);};
+function render(){
+ $('clock').textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});
+ if(!data||performance.now()-lastMessage>1500){$('speed').textContent='--';$('lapCurrent').textContent='--:--.-';$('gdot').hidden=true;$('gval').textContent='G --';
+  $('compass').textContent='--';$('alarm').className='warn';$('alarm').textContent=data?'계기 연결 지연 · 현재 값 확인 불가':'센서 수신 대기';
+  $('lapNumber').textContent='--';$('context').textContent='새 데이터 대기';$('sourceStatus').textContent='현재 입력 확인 불가';
+  for(let i=0;i<6;i++)$('b'+i).textContent='--';$('recordStatus').textContent='현재 기록 확인 불가';$('order').hidden=true;return;}
+ const s=data,game=s.input?.kind==='game',f=s.input?.frame||{},h=s.health||{},lt=s.lap_timing||{};
+ const badge=game?'PCARS 1 · GAME':s.profile?.source_version?.startsWith('demo_sim')?'DEMO':'';
+ $('demoBadge').textContent=badge;$('demoBadge').hidden=!badge;
+ $('speed').textContent=num(s.speed,0);
+ const w=(s.warnings||[])[0];$('alarm').textContent=w?.text||'UNIMOTORS · '+(s.driver_id||'driver');$('alarm').className=w?(w.priority===0?'crit':'warn'):'';
+ const gx=s.g_lat,gz=s.g_lon,valid=typeof gx==='number'&&typeof gz==='number';$('gdot').hidden=!valid;
+ if(valid){$('gdot').style.left=(50+Math.max(-1,Math.min(1,gx/1.5))*42)+'%';$('gdot').style.top=(50-Math.max(-1,Math.min(1,gz/1.5))*42)+'%';}
+ $('gval').textContent=(game?'SDK G ':'GPS G ')+(valid?num(Math.hypot(gx,gz),2):'--');
+ $('compass').textContent=game?(f.gear??'--'):typeof s.heading==='number'?['N','NE','E','SE','S','SW','W','NW'][Math.round(s.heading/45)%8]:'--';
+ $('deg').textContent=game?'GEAR · 게임':num(s.heading,0)+'°';
+ $('context').textContent=game?[s.input.context?.car,s.input.context?.track].filter(Boolean).join(' · ')||'Project CARS 1':s.recovery==='candidate'?'이전 기록 있음 · v7 설정에서 확인':s.phase;
+ $('lapNumber').textContent=(lt.number??'--')+(lt.interrupted?' · 미확정':'');$('lapCurrent').textContent=lap(lt.current);
+ $('lapHistory').textContent='LAST '+lap(lt.last)+' · BEST '+lap(lt.best);
+ const values=game?[f.rpm,f.gear,f.fuel_fraction==null?null:f.fuel_fraction*100,f.water_c,s.lap_count,f.race_position]:[s.soc,s.voltage,s.current,s.temp_max,s.remain_ah,s.range_km];
+ const labels=game?['RPM · 게임','기어 · 게임','연료 % · 게임','냉각수 °C · 게임','완료 랩 · 게임','순위 · 게임']:['SOC %','VOLT','AMP','TEMP °C','REMAIN Ah','RANGE km'];
+ values.forEach((v,i)=>{$('b'+i).textContent=game&&i===1?(v??'--'):num(v,game?0:[0,1,1,0,1,0][i]);$('l'+i).textContent=labels[i];});
+ $('sourceStatus').textContent=game?'PCARS 1 · BMS 미제공 · SDK 로컬 축':'GPS '+num(s.gps_age,1)+'s · BMS '+num(s.bms_age,1)+'s';
+ $('recordStatus').textContent=(h.storage_ok?'로컬 기록':'기록 실패')+' · 미전송 '+(h.backlog??'--');
+ command=(s.commands||[]).find(c=>c.status!=='seen');$('order').hidden=!command;$('orderText').textContent=command?'TEAM · '+command.message:'';
+ document.documentElement.style.filter='brightness('+(s.driver_settings?.brightness||1)+')';
+ document.documentElement.dataset.contrast=s.driver_settings?.contrast||'normal';
+}
+function connect(){const es=new EventSource('/stream');es.onmessage=e=>{try{data=JSON.parse(e.data);lastMessage=performance.now();render();}catch(_){}};
+es.onerror=()=>{lastMessage=-Infinity;render();es.close();setTimeout(connect,1000);};}
+$('seen').onclick=async()=>{if(!command)return;const token=prompt('팀 메시지 확인용 설정 인증 토큰');if(!token)return;
+ try{const r=await fetch('/api/command/seen',{method:'POST',headers:{'Content-Type':'application/json','X-Auth-Token':token},body:JSON.stringify({id:command.id})});if(!r.ok)throw Error('확인 실패');}catch(e){$('alarm').textContent=e.message;}};
+setInterval(render,250);connect();render();
+</script></body></html>

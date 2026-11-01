@@ -29,7 +29,21 @@ GPS/BMS 하드웨어 없이 같은 RaceRuntime·운전자 화면·CSV·내구성
 python vehicle/demo_sim.py --no-upload --bind 127.0.0.1 --port 8080 --seed 2026
 ```
 
-브라우저에서 `http://127.0.0.1:8080/`을 연다. Raspberry Pi 자동 설치는 [데모·설치 안내](docs/21-demo-pi.md), 검증 범위는 [81개 테스트와 실제 로컬 통신 시험](docs/23-demo-v7-validation.md)을 참고한다. 데모 상태는 실제 차량 DB와 분리한다. [Project CARS 1을 이용한 학생 평가](docs/22-project-cars-study.md)는 연결 구조와 실험 설계이며 게임 입력 어댑터·실제 게임 연결은 아직 구현하지 않았다.
+브라우저에서 `http://127.0.0.1:8080/`을 연다. 화면의 테마 선택으로 **v7 연구형 / Claude 클래식**을 전환한다. 선택은 해당 브라우저에 저장된다. Raspberry Pi 자동 설치는 [데모·설치 안내](docs/21-demo-pi.md), 검증 범위는 [데모 검증](docs/23-demo-v7-validation.md)을 참고한다. 데모 상태는 실제 차량 DB와 분리한다.
+
+## Project CARS 1 PC 수신 · 테마 선택 (2026-11-01)
+
+게임의 `Options & Help → Gameplay → UDP Frequency`를 켜고(최초 시험 5), 게임 PC에서 저장소 루트 기준으로 실행한다. 로컬 표시·CSV 저장에는 추가 Python 패키지가 필요 없다.
+
+```bash
+python vehicle/pcars_receiver.py --bind 0.0.0.0
+```
+
+PC에서는 `http://127.0.0.1:8080/`, 같은 Wi-Fi의 S25 Ultra/iPad에서는 `http://게임PC의IPv4주소:8080/`을 연다. Windows에서 필요한 경우 해당 개인 네트워크의 Python 수신을 허용한다. UDP 5606을 사용하는 다른 수신 앱은 먼저 닫는다.
+
+속도·RPM·기어·연료·냉각수·게임 랩 시간을 표시하며 BMS·SOC·Wh는 미제공으로 남긴다. Claude 클래식은 기존의 검은 배경·파란 속도·G-G 구성에 v7의 최신성·경고 표시를 적용했다. `/?theme=v7`, `/?theme=claude`, `/legacy`로 직접 열 수도 있다. [실행·문제 해결·검증 범위](docs/24-pcars-and-themes.md) · [학생 평가 설계](docs/22-project-cars-study.md).
+
+가상 UDP와 실제 로컬 수신/CSV/SSE/서버 ACK, 두 테마의 표시를 검증했다. **사용자 보유 게임을 직접 실행한 호환 확인과 실제 Pi·차량 시험은 아직 수행하지 않았다.**
 
 ## 목차
 

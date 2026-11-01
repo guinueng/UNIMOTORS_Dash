@@ -812,20 +812,8 @@ def serve_v7(args, gs, route):
                 rt.update_bms(b)
                 t_bms = now
 
-    class DemoHandler(gs.Handler):
-        def _html(self, legacy=False):
-            if legacy:
-                return super()._html(legacy=True)
-            page = Path(gs.__file__).with_name("driver_dashboard.html").read_text(encoding="utf-8")
-            b = page.replace('<span id="phase">', DEMO_BADGE + '<span id="phase">', 1).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(b)))
-            self.end_headers()
-            self.wfile.write(b)
-
     try:
-        srv = gs.ThreadingHTTPServer((args.bind, gs.PORT), DemoHandler)
+        srv = gs.ThreadingHTTPServer((args.bind, gs.PORT), gs.Handler)
     except BaseException:
         rt.close()
         raise

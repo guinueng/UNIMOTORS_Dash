@@ -97,7 +97,7 @@ def stage_fixture(tmp_path):
     source, home = tmp_path / "source", tmp_path / "home"
     source.mkdir(); home.mkdir()
     files = ["vehicle/gps_server.py", "vehicle/demo_sim.py", "vehicle/race_runtime.py",
-             "vehicle/driver_dashboard.html", "shared/telemetry_protocol.py", "vehicle/bms_reader.py",
+             "vehicle/driver_dashboard.html", "vehicle/claude_dashboard.html", "shared/telemetry_protocol.py", "vehicle/bms_reader.py",
              "vehicle/backfill.py", "deploy/vehicle/lte_auto.sh"]
     for name in files:
         dest = source / Path(name).name
@@ -111,7 +111,7 @@ def stage_run(tmp_path, source, home, **extra):
                  tmp_path, TEST_HOME=posix(home), TEST_SOURCE=posix(source), **extra)
 
 
-@pytest.mark.parametrize("failure", ["missing_protocol", "invalid_python", "failed_model", "missing_dashboard", "legacy_demo"])
+@pytest.mark.parametrize("failure", ["missing_protocol", "invalid_python", "failed_model", "missing_dashboard", "missing_theme", "legacy_demo"])
 def test_invalid_bundle_never_replaces_existing_files(tmp_path, failure):
     source, home = stage_fixture(tmp_path)
     if failure == "missing_protocol":
@@ -124,6 +124,8 @@ def test_invalid_bundle_never_replaces_existing_files(tmp_path, failure):
             "if __name__ == '__main__': raise SystemExit(17)\n", encoding="utf8")
     elif failure == "legacy_demo":
         (source / "demo_sim.py").write_text("# v6 model-only demo has no v7 input adapter\n", encoding="utf8")
+    elif failure == "missing_theme":
+        (source / "claude_dashboard.html").unlink()
     else:
         (source / "driver_dashboard.html").write_text("", encoding="utf8")
     result = stage_run(tmp_path, source, home)
@@ -140,7 +142,7 @@ def test_v7_bundle_installs_flat_and_reruns(tmp_path, role):
         result = stage_run(tmp_path, source, home, TEST_ROLE=role)
         assert result.returncode == 0, result.stderr
         assert "SERVICE_STAGE_REACHED" in result.stdout
-    for name in ("gps_server.py", "race_runtime.py", "telemetry_protocol.py", "driver_dashboard.html"):
+    for name in ("gps_server.py", "race_runtime.py", "telemetry_protocol.py", "driver_dashboard.html", "claude_dashboard.html"):
         assert (home / name).read_bytes() == (source / name).read_bytes()
     assert not list(home.glob(".unimotors-stage.*"))
 

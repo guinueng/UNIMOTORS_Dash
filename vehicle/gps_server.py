@@ -34,7 +34,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -812,6 +812,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("body must be an object")
             if path == "/api/measurements/external":
+                if RUNTIME.snapshot().get("capabilities", {}).get("game"):
+                    raise ValueError("game input does not accept vehicle measurements")
                 RUNTIME.update_external_vi(body)
             elif path == "/api/command/seen":
                 RUNTIME.acknowledge_command(body["id"])
@@ -823,6 +825,8 @@ class Handler(BaseHTTPRequestHandler):
                 if speed is None and body.get("confirm_stationary") is not True:
                     raise ValueError("stationary confirmation required")
                 action = body.get("action")
+                if snap.get("capabilities", {}).get("game") and action != "driver":
+                    raise ValueError("game controls lap/session state; only display settings may be changed")
                 if action == "resume":
                     RUNTIME.resume(body.get("same_battery") is True)
                 elif action == "new_race":
@@ -902,8 +906,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def _html(self, legacy=False):
-        page = Path(__file__).with_name("driver_dashboard.html")
-        b = DASHBOARD_HTML.encode() if legacy else page.read_bytes()
+        theme = parse_qs(urlsplit(self.path).query).get("theme", [""])[0]
+        claude = legacy or theme == "claude"
+        page = Path(__file__).with_name("claude_dashboard.html" if claude else "driver_dashboard.html")
+        b = page.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
