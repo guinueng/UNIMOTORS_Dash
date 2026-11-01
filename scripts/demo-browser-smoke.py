@@ -95,7 +95,9 @@ def main():
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight")
                     page.screenshot(path=str(qa / f"demo-v7-{mode}.png"))
                 before = count(pit_db, "SELECT COUNT(*) FROM records_v7 WHERE vehicle='demo'")
-                server.terminate()
+                # A real abrupt outage; aiohttp's graceful SIGTERM shutdown can
+                # otherwise wait for open WebSockets on Linux.
+                server.kill()
                 server.wait(timeout=5)
                 until(lambda: count(state_db, "SELECT COUNT(*) FROM samples WHERE acked=0") >= 5,
                       "offline samples were not queued")
@@ -122,7 +124,11 @@ def main():
             for process in (demo, server):
                 if process and process.poll() is None:
                     process.terminate()
-                    process.wait(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
             log.close()
 
 
