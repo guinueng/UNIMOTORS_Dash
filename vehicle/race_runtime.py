@@ -1661,6 +1661,7 @@ class RaceRuntime:
                             for e in self.events_pending
                         ],
                     )
+                    self._persist_extra(self.pending)
                     saved = dict(self.run)
                     saved["_last_segment_id"] = self.segment
                     if self.candidate:
@@ -1687,6 +1688,10 @@ class RaceRuntime:
             except (sqlite3.Error, ValueError, OSError) as exc:
                 self.storage_error = type(exc).__name__ + ": " + str(exc)[:140]
                 return False
+
+    def _persist_extra(self, records):
+        """Optional input-specific indexes, inside the canonical sample transaction."""
+        pass
 
     def outbox(self, limit=100):
         with self.lock:

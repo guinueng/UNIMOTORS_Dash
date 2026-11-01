@@ -19,7 +19,9 @@ echo "==> 2/4 코드 배치 -> $HOME_DIR"
 install -o "$USER_NAME" -g "$USER_NAME" -m 644 \
   "$REPO/server/telemetry_server.py" "$REPO/server/dashboard.html" \
   "$REPO/server/research_store.py" "$REPO/server/research_dashboard.html" \
-  "$REPO/shared/telemetry_protocol.py" "$HOME_DIR/"
+  "$REPO/shared/telemetry_protocol.py" "$REPO/shared/game_tracks.py" \
+  "$REPO/shared/game_track_viewer.html" "$REPO/shared/pcars_track_maps.json" \
+  "$REPO/docs/third_party/pcars-reference-maps-LICENSE.txt" "$HOME_DIR/"
 
 echo "==> 3/4 환경파일"
 if [[ ! -f /etc/default/unimotors ]]; then

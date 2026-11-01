@@ -16,6 +16,9 @@ except ImportError:
     from telemetry_protocol import FIELDS, TEXT_FIELDS, normalize_sample, finite
 
 
+import game_tracks
+
+
 class ResearchStore:
     def __init__(self, path):
         self.path = str(path)
@@ -31,6 +34,7 @@ class ResearchStore:
                 CREATE TABLE IF NOT EXISTS team_commands(id TEXT PRIMARY KEY, vehicle TEXT,
                     payload TEXT, status TEXT);
             """)
+            game_tracks.ensure_schema(db)
             db.execute("BEGIN IMMEDIATE")
             if "cancel_acked" not in {
                 r[1] for r in db.execute("PRAGMA table_info(team_commands)")
@@ -164,6 +168,7 @@ class ResearchStore:
                             + ")",
                             values,
                         )
+                    game_tracks.ingest_points(db, [record])
                     accepted.append(record["sample_id"])
                     normalized.append(record)
                 except (ValueError, TypeError) as exc:
@@ -302,6 +307,18 @@ class ResearchStore:
             db.execute(
                 "UPDATE team_commands SET status='cancelled' WHERE id=?", (identifier,)
             )
+
+    def game_races(self, vehicle):
+        with self.connect() as db:
+            return game_tracks.races(db, vehicle)
+
+    def game_trace(self, vehicle, race, key=None):
+        with self.connect() as db:
+            return game_tracks.trace(db, vehicle, race, key)
+
+    def save_game_map(self, value):
+        with self.connect() as db:
+            return game_tracks.save_map(db, value)
 
     def command_history(self, vehicle):
         with self.connect() as db:

@@ -63,6 +63,7 @@ def decode_packet(data):
     gear, gears = gear_bits & 15, gear_bits >> 4
     gear_text = "R" if gear == 15 else "N" if gear == 0 else str(gear) if gear <= gears else None
     water, = struct.unpack_from("<h", data, 104)
+    world = struct.unpack_from("<hhh", data, offset) if selected and data[offset + 8] & 128 else (None, None, None)
     return dict(
         type="telemetry", build=build, sequence=sequence,
         game_state=game_state, session_state=session_state, race_state=race_state,
@@ -80,6 +81,9 @@ def decode_packet(data):
         last_lap_s=number(data, 16, 0.001, 86400),
         best_lap_s=number(data, 12, 0.001, 86400),
         odometer_km=number(data, 132, 0, 10_000_000),
+        world_x=world[0], world_y=world[1], world_z=world[2],
+        lap_distance=struct.unpack_from("<H", data, offset + 6)[0] if selected else None,
+        track_length=number(data, 1360, 100, 100000),
         # SDK local axes, not asserted to be geographic/vehicle IMU measurements.
         local_g_x=None if (x := number(data, 184, -200, 200)) is None else x / 9.80665,
         local_g_z=None if (z := number(data, 192, -200, 200)) is None else z / 9.80665,

@@ -40,6 +40,7 @@ from aiohttp import web, WSMsgType
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shared"))
 from telemetry_protocol import parse_csv
 from research_store import ResearchStore
+import game_tracks
 
 RESEARCH_KEY = web.AppKey("research", ResearchStore)
 WATCHER_KEY = web.AppKey("watcher", asyncio.Task)
@@ -482,13 +483,17 @@ def db_count_target(vehicle, session=None):
             + (" AND segment=?" if session else ""),
             (vehicle, session) if session else (vehicle,),
         ).fetchone()[0]
+        g = conn.execute("SELECT COUNT(*) FROM game_track_points WHERE vehicle=?"
+                         + (" AND segment=?" if session else ""),
+                         (vehicle, session) if session else (vehicle,)).fetchone()[0]
         return {
             "vehicle": vehicle,
             "session": session,
             "summary": s,
             "track": t,
             "research": r,
-            "total": s + t + r,
+            "game_positions": g,
+            "total": s + t + r + g,
         }
     finally:
         conn.close()
@@ -516,6 +521,9 @@ def db_delete_data(vehicle, session=None):
             + (" AND segment=?" if session else ""),
             (vehicle, session) if session else (vehicle,),
         ).rowcount
+        c5 = conn.execute("DELETE FROM game_track_points WHERE vehicle=?"
+                          + (" AND segment=?" if session else ""),
+                          (vehicle, session) if session else (vehicle,)).rowcount
         if session:
             identifiers = [
                 identifier
@@ -541,7 +549,8 @@ def db_delete_data(vehicle, session=None):
             "deleted_track": c2,
             "deleted_research": c3,
             "deleted_events": c4,
-            "total": c1 + c2 + c3 + c4,
+            "deleted_game_positions": c5,
+            "total": c1 + c2 + c3 + c4 + c5,
         }
     finally:
         conn.close()
@@ -1056,6 +1065,47 @@ async def research_index(request):
     return web.FileResponse(Path(__file__).with_name("research_dashboard.html"))
 
 
+async def game_map_index(request):
+    return web.FileResponse(game_tracks.VIEWER)
+
+
+async def api_game_tracks(request):
+    vehicle = request.query.get("vehicle", "pcars1")
+    record = latest.get(vehicle, {})
+    source = record.get("input")
+    if source is None:
+        try:
+            source = json.loads(record.get("meta") or "{}").get("input", {})
+        except (ValueError, AttributeError):
+            source = {}
+    source = dict(source) if isinstance(source, dict) else {}
+    if time.time() - last_seen.get(vehicle, 0) > 2:
+        source.update(status="stale", frame={})
+    c = source.get("context", {})
+    return web.json_response(dict(vehicle=vehicle,
+                                  races=await run_db(request.app[RESEARCH_KEY].game_races, vehicle),
+                                  live=source, live_race=record.get("race_session_id"),
+                                  live_key=game_tracks.track_key(c.get("track"), c.get("variation"))))
+
+
+async def api_game_trace(request):
+    vehicle, race = request.query.get("vehicle", "pcars1"), request.query.get("race_session_id")
+    if not race:
+        return web.json_response({"error": "race_session_id required"}, status=400)
+    return web.json_response(await run_db(request.app[RESEARCH_KEY].game_trace, vehicle, race, request.query.get("key")))
+
+
+async def api_game_map(request):
+    if not authorized(request):
+        return web.json_response({"error": "configured token required"}, status=401)
+    if request.content_length is None or request.content_length > 2_000_000:
+        return web.json_response({"error": "map payload too large"}, status=413)
+    try:
+        return web.json_response({"map": await run_db(request.app[RESEARCH_KEY].save_game_map, await request.json())})
+    except (ValueError, TypeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def research_live(request):
     return web.json_response(
         {"latest": latest, "received_at": last_seen, "vehicles": vehicle_list_payload()}
@@ -1142,6 +1192,10 @@ def make_app():
             web.post("/api/delete", api_delete),
             web.get("/", index),
             web.get("/research", research_index),
+            web.get("/game-map", game_map_index),
+            web.get("/api/game-tracks", api_game_tracks),
+            web.get("/api/game-trace", api_game_trace),
+            web.post("/api/game-map", api_game_map),
             web.get("/api/research/live", research_live),
             web.get("/api/races", api_races),
             web.get("/api/race-report", api_race_report),
