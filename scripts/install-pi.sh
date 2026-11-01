@@ -206,6 +206,10 @@ sys.path.insert(0, str(stage))
 import gps_server
 if not hasattr(gps_server, "RaceRuntime") or not hasattr(gps_server, "V7_FIELDS"):
     raise SystemExit("gps_server.py v7/RaceRuntime 구성이 필요합니다.")
+if (stage / "demo_sim.py").is_file():
+    import demo_sim
+    if not all(callable(getattr(demo_sim, name, None)) for name in ("serve_v7", "demo_profile")):
+        raise SystemExit("demo_sim.py의 v7 입력 어댑터가 없습니다. v6 데모와 v7 런타임을 혼합 설치하지 마세요.")
 page = (stage / "driver_dashboard.html").read_text(encoding="utf-8")
 if "<html" not in page or 'id="phase"' not in page:
     raise SystemExit("v7 운전자 화면이 비어 있거나 지원하지 않는 형식입니다.")

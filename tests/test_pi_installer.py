@@ -111,7 +111,7 @@ def stage_run(tmp_path, source, home, **extra):
                  tmp_path, TEST_HOME=posix(home), TEST_SOURCE=posix(source), **extra)
 
 
-@pytest.mark.parametrize("failure", ["missing_protocol", "invalid_python", "failed_model", "missing_dashboard"])
+@pytest.mark.parametrize("failure", ["missing_protocol", "invalid_python", "failed_model", "missing_dashboard", "legacy_demo"])
 def test_invalid_bundle_never_replaces_existing_files(tmp_path, failure):
     source, home = stage_fixture(tmp_path)
     if failure == "missing_protocol":
@@ -119,7 +119,11 @@ def test_invalid_bundle_never_replaces_existing_files(tmp_path, failure):
     elif failure == "invalid_python":
         (source / "gps_server.py").write_text("def broken(", encoding="utf8")
     elif failure == "failed_model":
-        (source / "demo_sim.py").write_text("raise SystemExit(17)\n", encoding="utf8")
+        (source / "demo_sim.py").write_text(
+            "def serve_v7(*args): pass\ndef demo_profile(*args): pass\n"
+            "if __name__ == '__main__': raise SystemExit(17)\n", encoding="utf8")
+    elif failure == "legacy_demo":
+        (source / "demo_sim.py").write_text("# v6 model-only demo has no v7 input adapter\n", encoding="utf8")
     else:
         (source / "driver_dashboard.html").write_text("", encoding="utf8")
     result = stage_run(tmp_path, source, home)

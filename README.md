@@ -29,7 +29,7 @@ GPS/BMS 하드웨어 없이 같은 RaceRuntime·운전자 화면·CSV·내구성
 python vehicle/demo_sim.py --no-upload --bind 127.0.0.1 --port 8080 --seed 2026
 ```
 
-브라우저에서 `http://127.0.0.1:8080/`을 연다. Raspberry Pi 자동 설치는 [데모·설치 안내](docs/21-demo-pi.md), 검증 범위는 [80개 테스트와 실제 로컬 통신 시험](docs/23-demo-v7-validation.md)을 참고한다. 데모 상태는 실제 차량 DB와 분리한다. [Project CARS 1을 이용한 학생 평가](docs/22-project-cars-study.md)는 연결 구조와 실험 설계이며 게임 입력 어댑터·실제 게임 연결은 아직 구현하지 않았다.
+브라우저에서 `http://127.0.0.1:8080/`을 연다. Raspberry Pi 자동 설치는 [데모·설치 안내](docs/21-demo-pi.md), 검증 범위는 [81개 테스트와 실제 로컬 통신 시험](docs/23-demo-v7-validation.md)을 참고한다. 데모 상태는 실제 차량 DB와 분리한다. [Project CARS 1을 이용한 학생 평가](docs/22-project-cars-study.md)는 연결 구조와 실험 설계이며 게임 입력 어댑터·실제 게임 연결은 아직 구현하지 않았다.
 
 ## 목차
 
