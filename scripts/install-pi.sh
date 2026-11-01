@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  UNIMOTORS Raspberry Pi 자동 세팅 (install-pi.sh v2)
+#  UNIMOTORS Raspberry Pi 자동 세팅 (install-pi.sh v3.1)
 #
 #  링크 한 줄 설치:
 #    curl -fsSL <BASE_URL>/scripts/install-pi.sh | bash -s -- --role demo --base-url <BASE_URL>
@@ -8,7 +8,7 @@
 #    bash install-pi.sh --role demo --src .
 #
 #  역할(--role)
-#    demo : 가상 주행 계기판 (demo_sim.py + gps_server.py, 서버로 vehicle=demo 전송)
+#    demo : 가상 주행 계기판 (demo_sim.py + gps_server.py v7 + race_runtime.py, 서버로 vehicle=demo 전송)
 #    car  : 실차 수집기 (gps_server.py + bms_reader.py + backfill.py + lte_auto.sh)
 #
 #  하는 일 (마스터 문서 V6 37장을 자동화)
@@ -25,7 +25,7 @@
 # =====================================================================
 set -euo pipefail
 
-SCRIPT_VERSION="v2"
+SCRIPT_VERSION="v3.1"
 ROLE="demo"
 BASE_URL="${UNIMOTORS_BASE_URL:-}"
 SRC_DIR=""
@@ -143,6 +143,84 @@ backup() {                  # 덮어쓰기 전에 타임스탬프 사본 (root �
   echo "    백업: $f.bak-$TS"
 }
 
+# BEGIN TESTABLE INSTALL HELPERS
+save_upload_token() {        # 기존 EnvironmentFile 보존, 토큰은 stdin으로만 전달
+  local f="$1" token="$2"
+  if [ "$DRY" -eq 1 ]; then echo "    + update token in $f (600, other settings preserved)"; return; fi
+  printf '%s' "$token" | sudo python3 -c '
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+
+path = Path(sys.argv[1]).resolve()
+token = sys.stdin.read()
+if not token or any(c in token for c in ("\x00", "\r", "\n")):
+    raise SystemExit("Token must be a nonempty single line")
+original = path.read_bytes() if path.exists() else b""
+text = original.decode("utf-8")
+# EnvironmentFile supports quoted multiline values. Keep legacy records intact;
+# the managed assignment at EOF overrides earlier token assignments (systemd).
+marker = "# UNIMOTORS installer managed upload token"
+tail = re.compile(r"(?:\n)?" + re.escape(marker) + r"\nUNIMOTORS_TOKEN=\"(?:[^\"\\\r\n]|\\.)*\"\n?\Z")
+text = tail.sub("", text)
+encoded = token
+for char in ("\\", "\"", "$", "`"):
+    encoded = encoded.replace(char, "\\" + char)
+if text and not text.endswith("\n"):
+    text += "\n"
+updated = (text + marker + "\nUNIMOTORS_TOKEN=\"" + encoded + "\"\n").encode("utf-8")
+if updated == original:
+    os.chmod(path, 0o600)
+    raise SystemExit(0)
+fd, temp = tempfile.mkstemp(prefix=".unimotors-env-", dir=path.parent)
+try:
+    os.chmod(temp, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(updated)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temp, path)
+finally:
+    if os.path.exists(temp):
+        os.unlink(temp)
+' "$f"
+}
+
+validate_staged_code() {     # 실행 파일을 교체하기 전에 v7 공통 모듈·화면 검사
+  local stage="$1"
+  python3 -B - "$stage" <<'PY'
+from pathlib import Path
+import sys
+
+stage = Path(sys.argv[1])
+required = ("gps_server.py", "race_runtime.py", "telemetry_protocol.py", "driver_dashboard.html")
+missing = [name for name in required if not (stage / name).is_file()]
+if missing:
+    raise SystemExit("v7 필수 파일 누락: " + ", ".join(missing))
+for path in stage.glob("*.py"):
+    source = path.read_text(encoding="utf-8")
+    compile(source, str(path), "exec")
+sys.path.insert(0, str(stage))
+import gps_server
+if not hasattr(gps_server, "RaceRuntime") or not hasattr(gps_server, "V7_FIELDS"):
+    raise SystemExit("gps_server.py v7/RaceRuntime 구성이 필요합니다.")
+page = (stage / "driver_dashboard.html").read_text(encoding="utf-8")
+if "<html" not in page or 'id="phase"' not in page:
+    raise SystemExit("v7 운전자 화면이 비어 있거나 지원하지 않는 형식입니다.")
+PY
+}
+
+cleanup_stage() {
+  [ -n "${STAGING_DIR:-}" ] || return 0
+  # 이 설치기가 만든 평면 디렉터리의 파일만 지웁니다. 재귀 삭제하지 않습니다.
+  local rel
+  for rel in "${FILES[@]}"; do rm -f -- "$STAGING_DIR/$(basename "$rel")"; done
+  rmdir -- "$STAGING_DIR" 2>/dev/null || true
+}
+# END TESTABLE INSTALL HELPERS
+
 # ---------------------------------------------------------------------
 #  환경 확인
 # ---------------------------------------------------------------------
@@ -221,10 +299,14 @@ fi
 #  2. 코드 내려받기
 # ---------------------------------------------------------------------
 step "코드 내려받기 → $HOME_DIR"
+# v7 계기판 = gps_server.py + race_runtime.py + driver_dashboard.html + telemetry_protocol.py
+#   (install-vehicle.sh 와 같은 평면 배치: 모두 홈 폴더 한 곳에 둔다)
+V7_FILES=(vehicle/gps_server.py vehicle/race_runtime.py vehicle/driver_dashboard.html
+          shared/telemetry_protocol.py)
 if [ "$ROLE" = "demo" ]; then
-  FILES=(vehicle/gps_server.py vehicle/demo_sim.py)
+  FILES=("${V7_FILES[@]}" vehicle/demo_sim.py)
 else
-  FILES=(vehicle/gps_server.py vehicle/bms_reader.py vehicle/backfill.py deploy/vehicle/lte_auto.sh)
+  FILES=("${V7_FILES[@]}" vehicle/bms_reader.py vehicle/backfill.py deploy/vehicle/lte_auto.sh)
 fi
 
 fetch_one() {               # fetch_one 레포경로 대상경로
@@ -232,29 +314,47 @@ fetch_one() {               # fetch_one 레포경로 대상경로
   if [ -n "$SRC_DIR" ]; then
     local cand
     for cand in "$SRC_DIR/$rel" "$SRC_DIR/$name"; do
-      if [ -f "$cand" ]; then run cp "$cand" "$dst.new"; return 0; fi
+      if [ -f "$cand" ]; then run cp "$cand" "$dst"; return 0; fi
     done
     die "로컬에서 $name 을 찾지 못했습니다 ($SRC_DIR)"
   elif [ -n "$BASE_URL" ]; then
-    run curl -fsSL "${BASE_URL%/}/$rel" -o "$dst.new" || die "다운로드 실패: ${BASE_URL%/}/$rel"
+    run curl -fsSL "${BASE_URL%/}/$rel" -o "$dst" || die "다운로드 실패: ${BASE_URL%/}/$rel"
   else
     die "--base-url 또는 --src 가 필요합니다."
   fi
 }
 
-for rel in "${FILES[@]}"; do
-  name="$(basename "$rel")"; dst="$HOME_DIR/$name"
-  fetch_one "$rel" "$dst"
-  if [ "$DRY" -eq 0 ] && [ -f "$dst" ] && cmp -s "$dst" "$dst.new"; then
-    rm -f "$dst.new"; ok "$name (변경 없음)"; continue
+STAGING_DIR=""
+if [ "$DRY" -eq 1 ]; then
+  for rel in "${FILES[@]}"; do fetch_one "$rel" "$HOME_DIR/$(basename "$rel").new"; done
+  echo "    + 검증 후 설치: v7 런타임 import / 화면 / 데모 계산 (dry-run에서는 실행하지 않음)"
+else
+  STAGING_DIR="$(mktemp -d "$HOME_DIR/.unimotors-stage.XXXXXX")"
+  trap cleanup_stage EXIT
+  for rel in "${FILES[@]}"; do fetch_one "$rel" "$STAGING_DIR/$(basename "$rel")"; done
+  if ! validate_staged_code "$STAGING_DIR"; then
+    die "코드 호환성 검증 실패 — 설치를 중단합니다."
   fi
-  backup "$dst"
-  run mv "$dst.new" "$dst"
-  case "$name" in *.sh) run chmod +x "$dst" ;; esac
-  ok "$name"
-done
-if [ "$ROLE" = "demo" ]; then
-  run python3 "$HOME_DIR/demo_sim.py" --dry-run 1 > /dev/null && ok "demo_sim.py 계산 검증 통과 (--dry-run 1)"
+  if [ "$ROLE" = "demo" ]; then
+    if ! python3 -B "$STAGING_DIR/demo_sim.py" --dry-run 1 > /dev/null; then
+      die "demo_sim.py 계산 검증 실패 — 설치를 중단합니다."
+    fi
+    ok "demo_sim.py 계산 검증 통과 (--dry-run 1)"
+  fi
+  for rel in "${FILES[@]}"; do
+    name="$(basename "$rel")"; dst="$HOME_DIR/$name"
+    if [ -f "$dst" ] && cmp -s "$dst" "$STAGING_DIR/$name"; then
+      ok "$name (변경 없음)"; continue
+    fi
+    backup "$dst"
+    cp "$STAGING_DIR/$name" "$dst.new"
+    mv "$dst.new" "$dst"
+    case "$name" in *.sh) chmod +x "$dst" ;; esac
+    ok "$name"
+  done
+  cleanup_stage
+  STAGING_DIR=""
+  trap - EXIT
 fi
 
 # ---------------------------------------------------------------------
@@ -412,8 +512,10 @@ if [ -z "$TOKEN" ]; then
 fi
 if [ -n "$TOKEN" ]; then
   backup /etc/default/unimotors
-  printf 'UNIMOTORS_TOKEN=%s\n' "$TOKEN" | put_root /etc/default/unimotors 600
-  ok "토큰 저장 (root 전용 600). 서비스 재시작 시 적용"
+  if ! save_upload_token /etc/default/unimotors "$TOKEN"; then
+    die "토큰 저장 실패 — 기존 설정을 유지하고 설치를 중단합니다."
+  fi
+  ok "토큰 갱신 (기존 설정 보존, root 전용 600). 서비스 재시작 시 적용"
   for u in "${ENABLE_NOW[@]}"; do
     if [[ "$u" == *.service ]]; then run sudo systemctl restart "$u" || true; fi
   done
