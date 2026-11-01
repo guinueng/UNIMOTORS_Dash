@@ -5,6 +5,7 @@ Runs on the game PC or a machine on the same broadcast LAN. No vehicle hardware
 reader is started. Game-native lap timing is kept separate from GPS lap detection.
 """
 import argparse
+import hmac
 import json
 import math
 import os
@@ -12,9 +13,11 @@ from pathlib import Path
 import socket
 import threading
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 from pcars_protocol import UDP_PORT, SequenceWindow, decode_packet
 from race_runtime import RaceRuntime
+import game_tracks
 
 
 class GameRuntime(RaceRuntime):
@@ -23,9 +26,14 @@ class GameRuntime(RaceRuntime):
         self.frame_at = None
         self.frame_index = 0
         self.context_changed = False
+        self.path_part = 0
+        self.game_index_ready = False
         self.receiver = {"source_ip": None, "accepted": 0, "invalid": 0,
                          "foreign": 0, "reordered": 0}
         super().__init__(directory, vehicle=vehicle, current_sign=1, **kwargs)
+        game_tracks.ensure_schema(self.db)
+        self.db.commit()
+        self.game_index_ready = True
         # A game process cannot establish continuity with an earlier game session.
         self.new_race("game-" + uuid.uuid4().hex)
         self.configure({"source_version": "pcars1_udp_v1; game; no BMS",
@@ -41,6 +49,9 @@ class GameRuntime(RaceRuntime):
     def update_game(self, value):
         with self.lock:
             now, old = self.clock.monotonic(), self.frame
+            if old and (value["active"] != old["active"] or self.context_changed or
+                        self.frame_at is not None and now - self.frame_at > 1.5):
+                self.path_part += 1
             if value["active"] and old:
                 reset = (self.context_changed or
                          old["game_state"] in (0, 1, 4, 5) or
@@ -55,6 +66,7 @@ class GameRuntime(RaceRuntime):
                     self.configure({"source_version": "pcars1_udp_v1; game; no BMS", "confirmed": True})
                     self.event("game_session_boundary", {"reason": "context/state/lap/gap"})
             self.frame, self.frame_at = dict(value), now
+            self.frame["path_part"] = self.path_part
             self.frame_index += 1
             if value["active"]:
                 self.context_changed = False
@@ -66,10 +78,12 @@ class GameRuntime(RaceRuntime):
             age = None if self.frame_at is None else self.clock.monotonic() - self.frame_at
             fresh = age is not None and 0 <= age <= 1.5
             f = self.frame
-            active = fresh and f.get("active", False)
+            active = fresh and f.get("active", False) and not self.context_changed
             status = "waiting" if not f else "stale" if not fresh else f["status"]
             if fresh and f["game_state"] == 2 and not f["active"]:
                 status = {3: "finished", 4: "disqualified", 5: "retired", 6: "dnf"}.get(f["race_state"], "waiting")
+            if self.context_changed:
+                status = "waiting"
             # Historical laps are explicitly separate; inactive frames never supply live values.
             live = dict(f) if active else {}
             s["input"] = dict(kind="game", transport="pcars1_udp_v1", status=status,
@@ -108,6 +122,22 @@ class GameRuntime(RaceRuntime):
                         lap_timing=s["lap_timing"])
             s["meta"] = json.dumps(meta, ensure_ascii=False, allow_nan=False)
             return s
+
+    def _persist_extra(self, records):
+        if self.game_index_ready:
+            game_tracks.ingest_points(self.db, records)
+
+    def game_races(self):
+        with self.lock:
+            return game_tracks.races(self.db, self.vehicle)
+
+    def game_trace(self, race, key=None):
+        with self.lock, self.db:
+            return game_tracks.trace(self.db, self.vehicle, race, key)
+
+    def save_game_map(self, value):
+        with self.lock, self.db:
+            return game_tracks.save_map(self.db, value)
 
     def report(self):
         result = super().report()
@@ -194,6 +224,44 @@ def main():
     rt = gs.RUNTIME = GameRuntime(state, vehicle=args.vehicle)
     gs.SESSION_ID = rt.segment
     receiver = DatagramInput(rt, args.source)
+
+    class GameHandler(gs.Handler):
+        def do_GET(self):
+            url = urlsplit(self.path)
+            q = parse_qs(url.query)
+            if url.path == "/game-map":
+                b = game_tracks.VIEWER.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+            elif url.path == "/api/game-tracks":
+                snap = rt.snapshot()
+                c = snap["input"]["context"]
+                self._json(dict(vehicle=rt.vehicle, races=rt.game_races(), live=snap["input"], live_race=snap["race_session_id"],
+                                live_key=game_tracks.track_key(c.get("track"), c.get("variation"))))
+            elif url.path == "/api/game-trace":
+                self._json(rt.game_trace(q.get("race_session_id", [rt.run["id"]])[0], q.get("key", [None])[0]))
+            else:
+                super().do_GET()
+
+        def do_POST(self):
+            if urlsplit(self.path).path != "/api/game-map":
+                return super().do_POST()
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 2_000_000:
+                    self.close_connection = True
+                    return self._json({"error": "map payload must be 1..2000000 bytes"}, 413)
+                body = self.rfile.read(size)
+                if gs.UPLOAD_TOKEN in ("change-me", "unimotors-secret-change-me") or not hmac.compare_digest(self.headers.get("X-Auth-Token", ""), gs.UPLOAD_TOKEN):
+                    return self._json({"error": "configured token required"}, 401)
+                if (rt.snapshot().get("speed") or 0) >= 2:
+                    raise ValueError("pause/stop before registering a map")
+                self._json({"map": rt.save_game_map(json.loads(body))})
+            except (ValueError, TypeError) as exc:
+                self._json({"error": str(exc)}, 400)
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     srv = None
     workers = []
@@ -205,7 +273,7 @@ def main():
             udp.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
                            socket.inet_aton("224.0.0.1") + socket.inet_aton(args.multicast_interface))
         udp.settimeout(0.2)
-        srv = gs.ThreadingHTTPServer((args.bind, args.port), gs.Handler)
+        srv = gs.ThreadingHTTPServer((args.bind, args.port), GameHandler)
         print(f"PCARS1 UDP {args.udp_bind}:{udp.getsockname()[1]} -> http://{args.bind}:{srv.server_address[1]}", flush=True)
         print(f"Game study only · no BMS/GPS · logs={gs.LOG_DIR} · state={state} · upload={args.upload}", flush=True)
 

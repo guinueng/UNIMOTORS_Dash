@@ -2,7 +2,8 @@
 import struct
 
 
-def telemetry(sequence=0, game=2, race=2, speed=20.0, completed=2, lap=3, viewed=0):
+def telemetry(sequence=0, game=2, race=2, speed=20.0, completed=2, lap=3, viewed=0,
+              x=120, y=3, z=-80, lap_distance=1200, track_length=3000):
     b = bytearray(1367)
     struct.pack_into("<H", b, 0, 1122)
     b[2], b[3], b[4], b[5] = (sequence % 64) << 2, (5 << 4) | game, viewed, 1
@@ -13,15 +14,17 @@ def telemetry(sequence=0, game=2, race=2, speed=20.0, completed=2, lap=3, viewed
     struct.pack_into("<h", b, 104, 87)
     struct.pack_into("<HH", b, 124, 4500, 8000)
     b[128] = (6 << 4) | 3
+    struct.pack_into("<hhhH", b, 464, x, y, z, lap_distance)
+    struct.pack_into("<f", b, 1360, track_length)
     b[464 + 8], b[464 + 9], b[464 + 10] = 0x81, completed, lap
     return bytes(b)
 
 
-def context():
+def context(track="Study circuit", variation="Short", car="Synthetic GT"):
     b = bytearray(1347)
     struct.pack_into("<H", b, 0, 1122)
     b[2] = 1
-    for start, value in [(3, b"Synthetic GT"), (67, b"GT3"), (131, b"Study circuit"), (195, b"Short")]:
+    for start, value in [(3, car.encode("latin-1")), (67, b"GT3"), (131, track.encode("latin-1")), (195, variation.encode("latin-1"))]:
         b[start:start + len(value)] = value
     # Participant-name section deliberately contains data that must never be read.
     b[259:272] = b"PRIVATE-NAME!"

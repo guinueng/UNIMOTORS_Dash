@@ -13,6 +13,7 @@ else if(!q&&saved==='v7'){u.searchParams.set('theme','v7');location.replace(u);}
 #alarm.warn{background:#4a3500;color:#ffcf5a}#alarm.crit{background:#720d0d;color:#fff;font-size:24px;font-weight:700}
 #top{display:flex;align-items:center;justify-content:space-between;padding:0 24px;color:#999;font-size:14px}
 select{background:#151b23;color:#c4dcff;border:1px solid #34475e;border-radius:5px;font:inherit;padding:5px}select:focus-visible{outline:3px solid #50a0ff}
+#gameMap{color:#82b7ff;margin-right:14px;text-decoration:none}
 #demoBadge{color:#82b7ff;margin-left:12px}main{display:flex;align-items:center;justify-content:center;gap:5vw;min-height:0;padding:6px 20px}
 #speed-box{text-align:center;min-width:3ch}#speed{font-size:clamp(95px,31vh,230px);font-weight:700;line-height:.95;font-variant-numeric:tabular-nums;text-shadow:0 0 6vmin #50a0ff40}
 #unit{font-size:3.2vmin;color:#888;letter-spacing:.2em;margin-top:1vmin}
@@ -32,7 +33,7 @@ html[data-contrast=high] .l,html[data-contrast=high] #gval,html[data-contrast=hi
 <div id="wrap">
 <div id="alarm" role="status">UNIMOTORS · 센서 수신 대기</div>
 <div id="top"><span><span id="clock">--:--:--</span><span id="demoBadge" hidden></span></span>
-<select id="theme" aria-label="테마 선택"><option value="v7">v7 연구형</option><option value="claude" selected>Claude 클래식</option></select></div>
+<span><a id="gameMap" href="/game-map" target="_blank" rel="noopener" hidden>서킷 지도 ↗</a><select id="theme" aria-label="테마 선택"><option value="v7">v7 연구형</option><option value="claude" selected>Claude 클래식</option></select></span></div>
 <main><div id="speed-box"><div id="speed">--</div><div id="unit">KM / H</div></div>
 <div><div id="gg"><div class="cross-h"></div><div class="cross-v"></div><div id="gdot" hidden></div></div><div id="gval">G --</div></div>
 <div id="heading"><div id="compass">--</div><div id="deg">방향 °</div><div id="context">센서 수신 대기</div></div></main>
@@ -54,6 +55,7 @@ function render(){
   $('lapNumber').textContent='--';$('context').textContent='새 데이터 대기';$('sourceStatus').textContent='현재 입력 확인 불가';
   for(let i=0;i<6;i++)$('b'+i).textContent='--';$('recordStatus').textContent='현재 기록 확인 불가';$('order').hidden=true;return;}
  const s=data,game=s.input?.kind==='game',f=s.input?.frame||{},h=s.health||{},lt=s.lap_timing||{};
+ $('gameMap').hidden=!game;
  const badge=game?'PCARS 1 · GAME':s.profile?.source_version?.startsWith('demo_sim')?'DEMO':'';
  $('demoBadge').textContent=badge;$('demoBadge').hidden=!badge;
  $('speed').textContent=num(s.speed,0);
