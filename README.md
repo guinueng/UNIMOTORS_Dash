@@ -11,6 +11,40 @@ KSAE 대회용 자작 전기차(UNIMOTORS)에 올린 실동작 시스템의 코�
 
 ---
 
+## V7 클러스터 연구 개선 (2026-10-06)
+
+**현재 V7.1**: Daly 전류의 소모 −/충전 +와 반대 방향을 정차 설정에서 선택한다. 원본 전류·변환 기준을 기록하고 전력·Wh/Ah·회생 표시에 함께 적용한다. 혼합 기준·미계측 랩의 예산 제외, 재시작 경고 이력, 설정 저장·CSV 재생·누적 통계를 보완했다. [수정사항·이유·설정·56개 시험](docs/20-polarity-and-validation.md).
+
+짧은 재시동의 경기 기록 복원, 센서별 최신성·미계측 처리, 누적 Wh/랩 예산, 기본·내구·정비 화면, 기한 있는 TEAM 오더와 경기 요약을 추가했다. 로컬 미전송 큐와 서버 커밋 뒤 ACK로 재전송의 중복 집계를 방지한다.
+
+[GitHub PR #1](https://github.com/guinueng/UNIMOTORS_Dash/pull/1) · [개선 내용·설정·검증·제한](docs/19-cluster-research.md) · [업데이트된 마스터](docs/MASTER.md). 차량 화면은 `/`, 이전 화면 `/legacy`, 피트 경기 관제 `/research`다. 새 코드의 실차 배포·검교정·물리 전원 차단 시험은 아직 수행하지 않았다.
+
+![현재 운전자 기본 화면 — 합성 입력](docs/images/cluster-v7_1-base.png)
+
+## V7 호환 데모 (2026-11-01)
+
+GPS/BMS 하드웨어 없이 같은 RaceRuntime·운전자 화면·CSV·내구성 outbox/ACK 경로를 실행한다. 서버 없이 PC에서 확인하려면 저장소 루트에서 실행한다.
+
+```bash
+python vehicle/demo_sim.py --no-upload --bind 127.0.0.1 --port 8080 --seed 2026
+```
+
+브라우저에서 `http://127.0.0.1:8080/`을 연다. 화면의 테마 선택으로 **v7 연구형 / Claude 클래식**을 전환한다. 선택은 해당 브라우저에 저장된다. Raspberry Pi 자동 설치는 [데모·설치 안내](docs/21-demo-pi.md), 검증 범위는 [데모 검증](docs/23-demo-v7-validation.md)을 참고한다. 데모 상태는 실제 차량 DB와 분리한다.
+
+## Project CARS 1 PC 수신 · 테마 선택 (2026-11-01)
+
+게임의 `Options & Help → Gameplay → UDP Frequency`를 켜고(최초 시험 5), 게임 PC에서 저장소 루트 기준으로 실행한다. 로컬 표시·CSV 저장에는 추가 Python 패키지가 필요 없다.
+
+```bash
+python vehicle/pcars_receiver.py --bind 0.0.0.0
+```
+
+PC에서는 `http://127.0.0.1:8080/`, 같은 Wi-Fi의 S25 Ultra/iPad에서는 `http://게임PC의IPv4주소:8080/`을 연다. Windows에서 필요한 경우 해당 개인 네트워크의 Python 수신을 허용한다. UDP 5606을 사용하는 다른 수신 앱은 먼저 닫는다.
+
+속도·RPM·기어·연료·냉각수·게임 랩 시간을 표시하며 BMS·SOC·Wh는 미제공으로 남긴다. Claude 클래식은 기존의 검은 배경·파란 속도·G-G 구성에 v7의 최신성·경고 표시를 적용했다. `/?theme=v7`, `/?theme=claude`, `/legacy`로 직접 열 수도 있다. [실행·문제 해결·검증 범위](docs/24-pcars-and-themes.md) · [학생 평가 설계](docs/22-project-cars-study.md).
+
+가상 UDP와 실제 로컬 수신/CSV/SSE/서버 ACK, 두 테마의 표시를 검증했다. **사용자 보유 게임을 직접 실행한 호환 확인과 실제 Pi·차량 시험은 아직 수행하지 않았다.**
+
 ## 목차
 
 - [무엇이 들어 있나](#무엇이-들어-있나)
@@ -85,11 +119,11 @@ flowchart LR
 | 데이터 | 레이트 | 저장 위치 | 용도 |
 |---|---|---|---|
 | raw NMEA | 10Hz | 차량 SD (`gps_*.csv`) | 정밀 궤적 원본 (업로드 안 함) |
-| telem CSV | 1Hz | 차량 SD (`telem_*.csv`) | backfill 소스 / 백업 |
-| 계기판 SSE | 1~2Hz | 폰 · DSI LCD | 운전자 실시간 표시 |
+| telem CSV | 기본 5Hz | 차량 SD (`telem_*.csv`) | backfill 소스 / 백업 |
+| 계기판 SSE | 기본 5Hz | 폰 · DSI LCD | 운전자 실시간 표시 |
 | 서버 push | 2Hz | 서버 `summary` | 원격 실시간 모니터링 |
 
-> 실시간 표시엔 2Hz면 사람 눈에 충분하다. 10Hz는 사후 분석용으로 로컬에만 둔다.
+> 표시·기록 주기는 센서 측정 주기와 다르다. 실차에서 표시 지연과 주기 달성률을 측정한다.
 
 ---
 
