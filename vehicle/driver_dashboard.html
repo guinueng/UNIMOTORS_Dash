@@ -3,7 +3,7 @@
 <title>UNIMOTORS 클러스터 · v7</title>
 <script>
 (()=>{const u=new URL(location.href),q=u.searchParams.get('theme'),saved=localStorage.getItem('unimotorsTheme');
-if(!q&&saved==='claude'){u.searchParams.set('theme','claude');location.replace(u);}else localStorage.setItem('unimotorsTheme','v7');})();
+if(!q&&saved&&saved!=='v7'){u.searchParams.set('theme',saved);location.replace(u);}else localStorage.setItem('unimotorsTheme','v7');})();
 </script>
 <style>
 *{box-sizing:border-box}html,body{margin:0;height:100%;font-family:system-ui,"Malgun Gothic",sans-serif;background:#0a1015;color:#e9f0f1}
@@ -55,7 +55,7 @@ textarea{font-family:monospace;min-height:130px}dialog p{font-size:14px;line-hei
 <div id="status"><span id="sensorStatus">GPS -- · BMS --</span><span id="recordStatus">기록 상태 확인 중</span></div>
 <nav aria-label="화면 모드"><button data-mode="base" aria-pressed="true">기본</button><button data-mode="endurance">내구</button>
 <button data-mode="pit">정비</button><button id="settings">설정 · 정차 후</button>
-<select id="theme" aria-label="테마 선택"><option value="v7">v7 연구형</option><option value="claude">Claude 클래식</option></select><a id="gameMap" href="/game-map" target="_blank" rel="noopener" hidden>서킷 지도 ↗</a></nav></div>
+<select id="theme" aria-label="테마 선택"><option value="v7">v7 연구형</option><option value="claude">Claude 클래식</option><option value="clean">정돈형</option></select><a id="gameMap" href="/game-map" target="_blank" rel="noopener" hidden>서킷 지도 ↗</a></nav></div>
 <dialog id="setup"><h2>경기 설정 · 정차 후 조작</h2>
 <p>팀의 표시·기록 설정입니다. 공식 랩·깃발·교체 사인과 계측기 판정은 현장 기준을 따릅니다. 차량 구동을 제어하지 않습니다.</p>
 <p id="gameHelp" hidden>게임이 랩·세션을 관리합니다. 운전자 표시 설정과 기록 저장만 사용할 수 있습니다.</p>

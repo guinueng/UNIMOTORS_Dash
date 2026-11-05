@@ -64,3 +64,4 @@ Raspberry Pi 기반 전기 레이싱카 텔레메트리 시스템의 전체 설�
 - [데모 Pi와 v7 설치](21-demo-pi.md)
 - [Project CARS 1 PC 연동·학생 평가 설계](22-project-cars-study.md)
 - [v7 데모 검증 결과](23-demo-v7-validation.md)
+- [정돈형 운전자 화면 (theme=clean)](26-clean-theme.md)

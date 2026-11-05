@@ -48,6 +48,11 @@ def no_overflow(page):
         assert box["x"] + box["width"] <= 800.5 and box["y"] + box["height"] <= 480.5
 
 
+# UNIMOTORS_SMOKE_THEME=clean 이면 같은 시나리오를 정돈형 테마로 검증한다 (기본: v7 연구형)
+THEME = os.environ.get("UNIMOTORS_SMOKE_THEME", "")
+SHOT = (THEME + "-") if THEME else ""
+
+
 def main():
     qa = ROOT / ".qa"
     qa.mkdir(exist_ok=True)
@@ -161,7 +166,7 @@ def main():
                 context = browser.new_context(viewport={"width": 800, "height": 480})
                 page = context.new_page()
                 page.on("pageerror", lambda e: failures.append(str(e)))
-                page.goto(driver_url)
+                page.goto(driver_url + (f"/?theme={THEME}" if THEME else ""))
                 page.wait_for_function(
                     "document.querySelector('#speed').textContent==='42'"
                 )
@@ -186,7 +191,7 @@ def main():
                     page.locator(f'[data-mode="{mode}"]').click()
                     page.wait_for_timeout(150)
                     no_overflow(page)
-                    page.screenshot(path=str(qa / f"driver-{mode}.png"))
+                    page.screenshot(path=str(qa / f"{SHOT}driver-{mode}.png"))
                 page.locator("#settings").click()
                 page.locator("#token").fill("qa-local-only")
                 page.locator("#modeInput").select_option("endurance")
@@ -215,7 +220,7 @@ def main():
                 assert runtime.snapshot()["current"] == 14
                 assert runtime.snapshot()["energy_quality"] == "unverified_basis"
                 assert runtime.snapshot()["budget"]["target_wh_lap"] is None
-                page.screenshot(path=str(qa / "driver-polarity.png"))
+                page.screenshot(path=str(qa / f"{SHOT}driver-polarity.png"))
                 page.locator("#close").click()
                 assert (
                     page.locator('[data-mode="endurance"]').get_attribute(
@@ -227,7 +232,7 @@ def main():
                 page.wait_for_function(
                     "document.querySelector('#phase').textContent==='드라이버 교체'"
                 )
-                page.screenshot(path=str(qa / "driver-change.png"))
+                page.screenshot(path=str(qa / f"{SHOT}driver-change.png"))
                 runtime.set_phase("RACE")
                 fixture["danger"] = True
                 page.wait_for_function(
@@ -235,7 +240,7 @@ def main():
                 )
                 assert "danger" in page.locator("#cluster").get_attribute("class")
                 no_overflow(page)
-                page.screenshot(path=str(qa / "driver-warning.png"))
+                page.screenshot(path=str(qa / f"{SHOT}driver-warning.png"))
                 fixture["danger"] = False
                 pit_context = browser.new_context(
                     viewport={"width": 1280, "height": 1000}
@@ -284,7 +289,7 @@ def main():
                 legacy.wait_for_function("document.querySelector('#speed').textContent==='--'")
                 assert legacy.locator("#b0").inner_text() == "--"
                 assert legacy.locator("#lapCurrent").inner_text() == "--:--.-"
-                page.screenshot(path=str(qa / "driver-disconnected.png"))
+                page.screenshot(path=str(qa / f"{SHOT}driver-disconnected.png"))
                 pit_context.set_offline(True)
                 pit.wait_for_function(
                     "document.querySelector('#health').textContent.includes('관제 연결 지연')",

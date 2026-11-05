@@ -195,7 +195,8 @@ from pathlib import Path
 import sys
 
 stage = Path(sys.argv[1])
-required = ("gps_server.py", "race_runtime.py", "telemetry_protocol.py", "driver_dashboard.html", "claude_dashboard.html")
+required = ("gps_server.py", "race_runtime.py", "telemetry_protocol.py", "driver_dashboard.html", "claude_dashboard.html",
+            "clean_dashboard.html")
 missing = [name for name in required if not (stage / name).is_file()]
 if missing:
     raise SystemExit("v7 필수 파일 누락: " + ", ".join(missing))
@@ -216,6 +217,9 @@ if "<html" not in page or 'id="phase"' not in page:
 page = (stage / "claude_dashboard.html").read_text(encoding="utf-8")
 if "<html" not in page or 'id="theme"' not in page:
     raise SystemExit("Claude 테마 파일이 비어 있거나 지원하지 않는 형식입니다.")
+page = (stage / "clean_dashboard.html").read_text(encoding="utf-8")
+if "<html" not in page or 'id="contentValue"' not in page:
+    raise SystemExit("정돈형 테마 파일이 비어 있거나 지원하지 않는 형식입니다.")
 PY
 }
 
@@ -309,7 +313,7 @@ step "코드 내려받기 → $HOME_DIR"
 # v7 계기판 = gps_server.py + race_runtime.py + driver_dashboard.html + telemetry_protocol.py
 #   (install-vehicle.sh 와 같은 평면 배치: 모두 홈 폴더 한 곳에 둔다)
 V7_FILES=(vehicle/gps_server.py vehicle/race_runtime.py vehicle/driver_dashboard.html
-          vehicle/claude_dashboard.html shared/telemetry_protocol.py)
+          vehicle/claude_dashboard.html vehicle/clean_dashboard.html shared/telemetry_protocol.py)
 if [ "$ROLE" = "demo" ]; then
   FILES=("${V7_FILES[@]}" vehicle/demo_sim.py)
 else
