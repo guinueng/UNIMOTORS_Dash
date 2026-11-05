@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UNIMOTORS 클러스터 · 정돈형</title>
+<script>
+(()=>{const u=new URL(location.href),q=u.searchParams.get('theme'),saved=localStorage.getItem('unimotorsTheme');
+if(!q&&saved&&saved!=='clean'){u.searchParams.set('theme',saved);location.replace(u);}else localStorage.setItem('unimotorsTheme','clean');})();
+</script>
+<style>
+/* 정돈형 v1 — 한눈에 읽기: 속도 1개 + 모드별 핵심 1개 + 배터리 띠 + 상태 점.
+   기술 상태 문구는 정비 모드와 설정 창으로만 보낸다. 같은 ID·같은 API 를 쓰므로 v7 연구형과 1:1 비교 가능 */
+:root{--bg:#000;--panel:#0e1418;--line:#1f2a31;--ink:#f3f6f4;--dim:#83939b;--ok:#3ddc97;--warn:#ffc23d;--bad:#ff4d4d;
+ --best:#b98cff;--cyan:#56c8ef;--num:"Pretendard","Noto Sans KR","Noto Sans CJK KR","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--num)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 14px}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--cyan);outline-offset:1px}
+.hidden{display:none!important}
+#cluster{height:100%;display:grid;grid-template-rows:36px minmax(0,1fr) 70px 50px;max-width:1600px;margin:auto}
+
+/* 상단: 평소엔 단계만, 경고가 있으면 띠 전체가 경고가 된다 */
+header{display:flex;align-items:center;gap:12px;padding:0 18px;font-size:17px;border-bottom:1px solid var(--line)}
+#phase{display:inline-flex;align-items:center;gap:8px;color:var(--dim);white-space:nowrap}
+#phase::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--dim)}
+#cluster[data-phase=RACE] #phase::before{background:var(--ok)}
+#alert{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+#demoBadge{font-size:13px;color:var(--cyan);border:1px solid #234452;border-radius:5px;padding:1px 7px;letter-spacing:.08em}
+#banner.warning{background:#3b2c00;border-color:#6b5000}#banner.warning #alert{color:var(--warn);font-weight:650}
+#banner.danger{background:#7d1212;border-color:#ff4d4d;animation:blink 1s steps(2,start) infinite}
+#banner.danger #alert{color:#fff;font-size:26px;font-weight:800}#banner.danger #phase{color:#ffd9d9}
+@keyframes blink{50%{background:#360606}}@media (prefers-reduced-motion:reduce){#banner.danger{animation:none}}
+#cluster.danger{grid-template-rows:64px minmax(0,1fr) 70px 50px;box-shadow:inset 0 0 0 5px var(--bad)}
+
+/* 본문: 왼쪽 속도, 오른쪽 모드별 핵심 하나 */
+main{display:grid;grid-template-columns:44% 56%;align-items:center;min-height:0;padding:0 22px}
+.speed{text-align:center;line-height:1}
+#speed{font-size:clamp(108px,36vh,200px);font-weight:800;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.unit{font-size:20px;color:var(--dim);margin-top:4px}
+#panel{border-left:1px solid var(--line);padding:0 0 0 26px;min-width:0}
+.label{font-size:19px;color:var(--dim);font-variant-numeric:tabular-nums}
+#contentValue{font-size:clamp(44px,15vh,84px);font-weight:750;line-height:1.08;font-variant-numeric:tabular-nums;margin:2px 0 6px;white-space:nowrap}
+#contentValue small{font-size:.38em;font-weight:500;color:var(--dim);margin-left:8px}
+#contentValue.over{color:var(--warn)}#contentValue.under{color:var(--ok)}
+#contentDetail{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:21px;font-variant-numeric:tabular-nums}
+.slow{color:var(--warn)}.best{color:var(--best)}.dimtext{color:var(--dim)}
+.sub{display:flex;gap:18px;font-size:17px;color:var(--dim);margin-top:10px;font-variant-numeric:tabular-nums}
+/* 에너지 예산 막대: 눈금 = 목표, 채움 = 최근 3랩 평균 (0~1.5배 목표) */
+.budget{position:relative;height:12px;background:var(--line);border-radius:6px;margin:12px 0 2px;overflow:hidden}
+.budget i{position:absolute;inset:0 auto 0 0;background:var(--ok);border-radius:6px}
+.budget.over i{background:var(--warn)}
+.budget b{position:absolute;top:-3px;bottom:-3px;left:66.67%;width:3px;background:var(--ink)}
+#recovery{margin-top:10px;font-size:17px;color:var(--warn)}
+#order{margin-top:12px;display:none;align-items:center;gap:12px;padding:10px 12px;border:2px solid var(--cyan);border-radius:10px;background:#071c25}
+#orderText{flex:1;font-size:21px;font-weight:650}#order button{border-color:var(--cyan);padding:6px 14px}
+.pitgrid{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin-top:8px;font-size:15px;font-variant-numeric:tabular-nums}
+.pitgrid dt{color:var(--dim)}.pitgrid dd{margin:0}.pitgrid .no{color:var(--warn)}
+
+/* 배터리 띠 */
+#metrics{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr;align-items:center;margin:0 18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.metric{padding:0 14px;font-variant-numeric:tabular-nums}.metric+.metric{border-left:1px solid var(--line)}
+.metric strong{font-size:27px;font-weight:700}.metric span{font-size:14px;color:var(--dim);margin-left:6px}
+#voltageBox{display:none}#cluster.showv #voltageBox{display:block}#cluster:not(.showv) #metrics{grid-template-columns:2.2fr 1fr 1fr}
+.soc{display:flex;align-items:center;gap:12px}
+#socBar{flex:1;display:grid;grid-template-columns:repeat(20,1fr);gap:3px;height:22px}
+#socBar i{background:var(--line);border-radius:2px}#socBar i.on{background:var(--cyan)}
+#socBar.low i.on{background:var(--warn)}#socBar.crit i.on{background:var(--bad)}
+
+/* 하단: 상태 점 + 모드 전환 */
+#footer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 18px}
+#sensorStatus,#recordStatus{display:inline-flex;gap:14px;font-size:14px;color:var(--dim);white-space:nowrap}
+.chips{display:flex;gap:14px}
+.chip{display:inline-flex;align-items:center;gap:6px}.chip::before{content:"";width:9px;height:9px;border-radius:50%;background:#3a464d}
+.chip.ok::before{background:var(--ok)}.chip.warn::before{background:var(--warn)}.chip.bad::before{background:var(--bad)}
+nav{display:flex;gap:6px;align-items:center}
+.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent;min-height:40px;padding:6px 16px;font-size:17px;color:var(--dim)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:var(--ink);color:#000;font-weight:700}
+#settings{min-height:40px;font-size:17px;color:var(--dim)}
+#gameMap{color:var(--cyan);font-size:14px;text-decoration:none;padding:6px}
+
+html[data-contrast=high]{--dim:#e6ecee;--line:#55636b}
+html[data-contrast=high] #socBar i.on{background:#fff}
+
+/* 설정 창 */
+dialog{width:min(760px,96vw);max-height:94vh;padding:0;background:#0b1115;color:var(--ink);border:1px solid #34444d;border-radius:12px;overflow:auto}
+dialog::backdrop{background:#000c}
+.dhead{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:12px;padding:14px 18px;background:#0b1115;border-bottom:1px solid var(--line)}
+.dhead h2{margin:0;font-size:20px;flex:1}
+.dbody{padding:4px 18px 16px}
+.dbody>p{font-size:14px;color:var(--dim);margin:10px 0}
+fieldset{border:1px solid var(--line);border-radius:10px;margin:14px 0 0;padding:6px 14px 14px}
+legend{padding:0 6px;font-weight:700}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px}
+label{display:block;font-size:14px;color:var(--dim);margin-top:8px}
+input,select,textarea{display:block;width:100%;margin-top:4px;background:#000;border:1px solid #34444d;border-radius:6px;padding:8px}
+input[type=checkbox]{display:inline;width:auto;margin:0 8px 0 0}input[type=range]{padding:0}
+textarea{font-family:ui-monospace,monospace;font-size:13px;min-height:150px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.row button.primary{background:var(--ink);color:#000;border-color:var(--ink);font-weight:700}
+details{margin-top:12px}summary{cursor:pointer;color:var(--dim)}
+.hint{font-size:13px;color:var(--dim);margin:6px 0 0}
+#error{position:sticky;bottom:0;margin:0;padding:10px 18px;background:#0b1115;border-top:1px solid var(--line);color:var(--warn);white-space:pre-wrap;min-height:1em}
+#error:empty{display:none}
+
+@media(max-width:600px){main{padding:0 10px;grid-template-columns:40% 60%}#panel{padding-left:14px}#metrics{margin:0 8px}.metric{padding:0 8px}
+ .metric strong{font-size:21px}#contentDetail{font-size:17px}#footer{padding:0 8px}.chips{gap:8px}.seg button{padding:6px 10px}.grid{grid-template-columns:1fr}}
+</style></head><body>
+<div id="cluster">
+<header id="banner"><span id="phase">READY</span><span id="alert"></span><span id="demoBadge" hidden></span></header>
+<main>
+ <div class="speed"><div id="speed">--</div><div class="unit">km/h</div></div>
+ <section id="panel" aria-live="polite">
+  <div class="label" id="contentLabel">센서 수신 대기</div>
+  <div id="contentValue">--</div>
+  <div id="contentDetail"></div>
+  <div id="budget" class="budget hidden"><i></i><b></b></div>
+  <div id="sub" class="sub hidden"></div>
+  <div id="recovery" class="hidden"></div>
+  <dl id="pitValues" class="pitgrid hidden"></dl>
+  <div id="order"><span id="orderText"></span><button id="seen">확인</button></div>
+ </section>
+</main>
+<section id="metrics">
+ <div class="metric soc"><div id="socBar" aria-hidden="true"></div><div><strong id="soc">--</strong><span id="socLabel">%</span></div></div>
+ <div class="metric"><strong id="power">--</strong><span id="powerLabel">kW</span></div>
+ <div class="metric"><strong id="temp">--</strong><span id="tempLabel">°C</span></div>
+ <div class="metric" id="voltageBox"><strong id="voltage">--</strong><span id="voltageLabel">V</span></div>
+</section>
+<div id="footer">
+ <div class="chips"><span id="sensorStatus"></span><span id="recordStatus"></span></div>
+ <nav aria-label="화면 모드"><div class="seg"><button data-mode="base" aria-pressed="true">기본</button><button data-mode="endurance">내구</button><button data-mode="pit">정비</button></div>
+  <button id="settings" title="정차 후에만 열립니다">설정</button><a id="gameMap" href="/game-map" target="_blank" rel="noopener" hidden>서킷 지도</a></nav>
+</div></div>
+
+<dialog id="setup">
+<div class="dhead"><h2>설정</h2><button id="close">닫기</button></div>
+<div class="dbody">
+<p>화면과 기록 설정만 바꿉니다. 차량 구동은 제어하지 않고, 공식 랩·깃발·교체 판정은 현장 기준을 따릅니다.</p>
+<p id="gameHelp" hidden>게임 입력 중에는 게임이 랩과 세션을 관리합니다. 운전자 화면 설정과 주행 요약 저장만 쓸 수 있습니다.</p>
+<div class="grid">
+ <label>설정 토큰<input id="token" type="password" autocomplete="off" placeholder="차량에 설정한 토큰"></label>
+ <label style="align-self:end"><input id="stationary" type="checkbox">GPS가 없어서 정차를 직접 확인했습니다</label>
+</div>
+
+<fieldset><legend>운전자 화면</legend>
+<div class="grid">
+ <label>운전자 ID<input id="driverId" value="driver1" maxlength="40"></label>
+ <label>기본 화면<select id="modeInput"><option value="base">기본</option><option value="endurance">내구</option><option value="pit">정비</option></select></label>
+ <label>밝기<input id="brightness" type="range" min=".2" max="1" step=".05" value="1"></label>
+ <label>대비<select id="contrast"><option value="normal">기본</option><option value="high">고대비</option></select></label>
+ <label>테마<select id="theme"><option value="clean">정돈형</option><option value="v7">v7 연구형</option><option value="claude">Claude 클래식</option></select></label>
+</div>
+<div class="row"><button id="setDriver" class="primary">운전자 설정 저장</button></div>
+</fieldset>
+
+<fieldset><legend>경기 진행</legend>
+<div class="grid">
+ <label>경기 단계<select id="phaseInput"><option value="READY">출발 준비</option><option value="FORMATION">포메이션</option><option value="RACE">경기 중</option><option value="CHANGE">드라이버 교체</option><option value="RESTART">재출발</option><option value="COOLDOWN">쿨다운</option><option value="FINISHED">종료</option></select></label>
+ <label>팀 보드와 맞춘 랩 수<input id="lapInput" type="number" min="0" max="10000" value="0"></label>
+</div>
+<div class="row"><button id="setPhase">단계 변경</button><button id="setLaps">랩 수 정정</button></div>
+<p class="hint">단계는 현장 공식 사인을 확인한 뒤 바꿉니다.</p>
+<div class="grid">
+ <label>배터리 사용 구간 ID<input id="batteryEpoch" placeholder="교체·충전 후 새 ID"></label>
+</div>
+<div class="row"><button id="resume">이전 경기 이어가기 (같은 배터리)</button><button id="newRace">새 경기 시작</button><button id="report">주행 요약 저장</button></div>
+</fieldset>
+
+<fieldset><legend>배터리와 예산</legend>
+<label>BMS 원본 전류 방향<select id="currentSign"><option value="-1">소모가 음수로 들어옴 (−1, 기본)</option><option value="1">소모가 양수로 들어옴 (+1)</option></select></label>
+<p class="hint">화면과 기록에서는 소모를 +, 충전·회생을 −로 바꿔 씁니다. 경기 중에 바꾸면 이전 누적값은 그대로 두고 기준이 섞였다고 표시합니다.</p>
+<div class="row"><button id="saveProfile" class="primary">프로파일 저장</button><button id="anchorBudget">남은 용량 재확인, 예산 기준 저장</button></div>
+<details><summary>경기 프로파일 직접 편집 (JSON)</summary>
+<textarea id="profileInput" spellcheck="false"></textarea>
+<p class="hint">usable_remaining_wh 는 저장 시점에 다시 확인한 사용 가능 용량, reserve_wh 는 남겨 둘 예비량입니다. confirmed=true 는 팀이 설정을 확인했다는 뜻입니다.</p>
+</details>
+</fieldset>
+</div>
+<pre id="error"></pre>
+</dialog>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+$('theme').onchange=()=>{localStorage.setItem('unimotorsTheme',$('theme').value);const u=new URL(location.href);u.pathname='/';u.searchParams.set('theme',$('theme').value);location.assign(u);};
+$('socBar').innerHTML='<i></i>'.repeat(20);
+let data=null,lastMessage=-Infinity,mode=localStorage.getItem('unimotorsMode')||'base',activeCommand=null,lastDriver=null,profileBaseline={};
+const num=(v,d=1)=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(d):'--';
+const lapClock=v=>typeof v==='number'&&Number.isFinite(v)?Math.floor(v/60)+':'+(v%60).toFixed(1).padStart(4,'0'):'--:--.-';
+const labels={READY:'출발 준비',FORMATION:'포메이션',RACE:'경기 중',CHANGE:'드라이버 교체',RESTART:'재출발',COOLDOWN:'쿨다운',FINISHED:'종료',
+ GAME_WAITING:'게임 대기',GAME_PAUSED:'일시정지',GAME_MENU:'메뉴',GAME_REPLAY:'리플레이',GAME_RESTARTING:'재시작',GAME_STALE:'수신 끊김',GAME_FINISHED:'종료',GAME_EXITED:'게임 종료'};
+const recoveryNames={new:'새 경기',candidate:'이전 기록이 있습니다. 정차 후 설정에서 확인하세요',automatic:'이전 경기 자동 복원',manual:'이전 경기 수동 복원',battery_check_required:'배터리 사용 구간을 확인하세요'};
+const events={practice:'연습',endurance:'내구',acceleration:'가속',gymkhana:'짐카나',performance:'성능'};
+const qualityNames={waiting:'대기',measured:'유효',partial:'일부 빠짐',unverified_basis:'부호·보정 확인 필요'};
+function el(tag,text,cls){const e=document.createElement(tag);e.textContent=text;if(cls)e.className=cls;return e;}
+function chip(name,state,title){const e=el('span',name,'chip '+state);if(title)e.title=title;return e;}
+const ageState=(a,ttl)=>typeof a!=='number'?'bad':a<=ttl?'ok':a<=ttl*3?'warn':'bad';
+function setMode(value){if(value==='pit'&&data?.speed>=2)return;mode=value;localStorage.setItem('unimotorsMode',mode);render();}
+for(const b of document.querySelectorAll('[data-mode]'))b.addEventListener('click',()=>setMode(b.dataset.mode));
+function show(id,on){$(id).classList.toggle('hidden',!on);}
+function socBar(frac){const n=frac==null?0:Math.round(Math.max(0,Math.min(1,frac))*20);
+ [...$('socBar').children].forEach((x,i)=>x.classList.toggle('on',i<n));
+ $('socBar').classList.toggle('low',frac!=null&&frac<.25);$('socBar').classList.toggle('crit',frac!=null&&frac<.12);}
+
+function render(){
+ for(const b of document.querySelectorAll('[data-mode]'))b.setAttribute('aria-pressed',String(b.dataset.mode===mode));
+ const stale=performance.now()-lastMessage>1500;
+ if(!data||stale){
+  for(const id of ['speed','soc','power','voltage','temp'])$(id).textContent='--';socBar(null);
+  $('banner').className='warning';$('cluster').classList.remove('danger');$('cluster').dataset.phase='';
+  $('alert').textContent=data?'계기 연결 지연, 현재 값 확인 불가':'센서 수신 대기';$('phase').textContent='수신 대기';
+  $('contentLabel').textContent='';$('contentValue').textContent='--';$('contentDetail').textContent='';
+  for(const id of ['budget','sub','recovery','pitValues'])show(id,false);
+  $('sensorStatus').replaceChildren(chip('입력','bad','현재 입력 확인 불가'));$('recordStatus').replaceChildren();
+  $('order').style.display='none';return;}
+ const s=data,p=s.profile||{},h=s.health||{},b=s.budget||{},lt=s.lap_timing||{};
+ const game=s.input?.kind==='game',gf=s.input?.frame||{};
+ const driverRevision=JSON.stringify([s.driver_id,s.driver_settings]);
+ if(lastDriver!==driverRevision){lastDriver=driverRevision;mode=s.driver_settings?.mode||mode;}
+ if(mode==='pit'&&s.speed>=2)mode='base';
+ for(const x of document.querySelectorAll('[data-mode]'))x.setAttribute('aria-pressed',String(x.dataset.mode===mode));
+ $('gameMap').hidden=!game;
+ const badge=game?'PCARS 1 · GAME':p.source_version?.startsWith('demo_sim')?'DEMO':'';
+ $('demoBadge').hidden=!badge;$('demoBadge').textContent=badge;
+
+ // 상단: 경고가 없으면 비워 둔다
+ $('cluster').dataset.phase=s.phase||'';$('phase').textContent=labels[s.phase]||s.phase;
+ const warning=(s.warnings||[])[0];
+ $('banner').className=warning?(warning.priority===0?'danger':'warning'):'';
+ $('cluster').classList.toggle('danger',warning?.priority===0);
+ $('alert').textContent=warning?warning.text:(s.replay?'로그 재생':'');
+ $('alert').title=(s.warnings||[]).map(x=>x.text).join('\n');
+
+ // 속도와 배터리 띠
+ $('speed').textContent=num(s.speed,0);
+ $('cluster').classList.toggle('showv',mode==='pit'||game);
+ if(game){
+  $('soc').textContent=gf.fuel_fraction==null?'--':num(gf.fuel_fraction*100,0);$('socLabel').textContent='% 연료';socBar(gf.fuel_fraction);
+  $('power').textContent=num(gf.rpm,0);$('powerLabel').textContent='rpm';
+  $('temp').textContent=num(gf.water_c,0);$('tempLabel').textContent='°C 냉각수';
+  $('voltage').textContent=gf.gear??'--';$('voltageLabel').textContent='단';
+ }else{
+  $('soc').textContent=num(s.soc,0);$('socLabel').textContent='%';socBar(typeof s.soc==='number'?s.soc/100:null);
+  $('power').textContent=s.power_w==null?'--':num(Math.abs(s.power_w)/1000,1);
+  $('powerLabel').textContent=s.power_w!=null&&s.power_w<0?'kW 회생':'kW';
+  $('temp').textContent=num(s.temp_max,0);$('tempLabel').textContent='°C';
+  $('voltage').textContent=num(s.voltage,1);$('voltageLabel').textContent='V';
+ }
+
+ // 오른쪽: 모드별 핵심 하나
+ const D=$('contentDetail');D.replaceChildren();
+ const V=$('contentValue');V.className='';
+ let sub='',budget=null;
+ const lastSpan=()=>{const t='LAST '+lapClock(lt.last)+(lt.last_delta==null?'':lt.last_delta<0.05?' ★':' (+'+num(lt.last_delta,1)+')');
+  return el('span',t,lt.last_delta!=null&&lt.last_delta<0.05?'best':lt.last_delta!=null?'slow':'');};
+ if(s.phase==='CHANGE'||s.phase==='RESTART'){
+  $('contentLabel').textContent=s.phase==='CHANGE'?'드라이버 교체 경과':'재출발 경과';
+  const t=s.phase==='CHANGE'?s.change_elapsed:s.restart_elapsed;
+  V.textContent=t==null?'--:--':String(Math.floor(t/60)).padStart(2,'0')+':'+String(Math.floor(t%60)).padStart(2,'0');
+  const allow=s.phase==='CHANGE'?p.change_allowance_s:p.restart_allowance_s;
+  D.append(el('span',allow==null?'기준 시간 미설정':'기준 '+num(allow,0)+'초','dimtext'));
+ }else if(game){
+  $('contentLabel').textContent='LAP '+(lt.number??'--')+(s.lap_uncertain?' (미확정)':'');
+  V.textContent=lapClock(lt.current);D.append(lastSpan(),el('span','BEST '+lapClock(lt.best),'best'));
+  sub=mode==='pit'?'게임 입력에는 GPS·BMS·에너지 값이 없습니다':[s.input.context?.car,s.input.context?.track].filter(Boolean).join(', ');
+ }else if(mode==='endurance'){
+  $('contentLabel').textContent=(s.lap_count??'--')+' / '+(p.total_laps??'--')+' 랩'+(s.lap_uncertain?' (미확정)':'');
+  V.textContent=num(b.recent_wh_lap,1);V.append(el('small','Wh/랩'));
+  if(b.target_wh_lap!=null&&b.recent_wh_lap!=null)V.className=b.recent_wh_lap>b.target_wh_lap?'over':'under';
+  D.append(el('span',b.target_wh_lap==null?'목표 미설정':'목표 '+num(b.target_wh_lap,1)+' Wh/랩','dimtext'));
+  if(b.target_wh_lap!=null&&b.recent_wh_lap!=null)budget=b.recent_wh_lap/b.target_wh_lap;
+  if(lt.line)sub=['LAP '+lapClock(lt.current),'LAST '+lapClock(lt.last)];
+ }else if(mode==='pit'){
+  $('contentLabel').textContent='이번 경기 소비';
+  V.textContent=num(s.used_wh,1);V.append(el('small','Wh'));
+  D.append(el('span',num(s.distance_km,2)+' km'),el('span',(events[p.event]||p.event||'연습')+(p.confirmed?'':' (설정 미확정)'),'dimtext'));
+ }else if(lt.line){
+  $('contentLabel').textContent='LAP '+(lt.number??'--')+(lt.interrupted||s.lap_uncertain?' (미확정)':'');
+  V.textContent=lapClock(lt.current);D.append(lastSpan(),el('span','BEST '+lapClock(lt.best),'best'));
+ }else{
+  $('contentLabel').textContent='이번 경기 소비';
+  V.textContent=num(s.used_wh,1);V.append(el('small','Wh'));D.append(el('span',num(s.distance_km,2)+' km','dimtext'));
+ }
+ show('budget',budget!=null);
+ if(budget!=null){$('budget').classList.toggle('over',budget>1);$('budget').firstChild.style.width=Math.min(100,budget/1.5*100)+'%';}
+ $('sub').replaceChildren(...(Array.isArray(sub)?sub:[sub]).filter(Boolean).map(x=>el('span',x)));show('sub',!!(sub&&sub.length));
+ const needsStop=s.recovery==='candidate'||s.recovery==='battery_check_required';
+ $('recovery').textContent=needsStop?recoveryNames[s.recovery]:'';show('recovery',needsStop&&mode!=='pit');
+
+ // 정비: 기술 상태는 여기서만 보인다 (내용은 항상 갱신해 두고 정비 모드에서만 표시)
+ show('pitValues',mode==='pit');
+ {
+  const t=s.trends||{},e=s.external||{};
+  const checks={gps:'GPS',bms:'BMS',storage:'기록',space:'공간',profile:'프로파일',clock:'시각',recovery:'복원'};
+  const failed=Object.entries(s.preflight||{}).filter(([,ok])=>!ok).map(([k])=>checks[k]||k);
+  const rows=game?[['입력',s.input.transport+' 프레임 '+s.input.frame_index],['수신',s.input.receiver.accepted+' (형식 오류 '+s.input.receiver.invalid+', 역순 '+s.input.receiver.reordered+')']]:[
+   ['전류',num(s.current,1)+' A (원본 '+num(s.raw_current,1)+' × '+s.current_sign+')'],
+   ['셀 편차',num(s.cell_v_diff,0)+' mV'],
+   ['점검',failed.length?failed.join(', ')+' 확인 필요':'이상 없음'],
+   ['기록','CSV '+(h.csv_ok?'정상':'실패')+', RAW '+(h.raw_ok?'정상':'실패')+', 미전송 '+(h.backlog??'--')],
+   ['복원',(recoveryNames[s.recovery]||s.recovery)+', 소비 '+(qualityNames[s.energy_quality]||'미확정')],
+   ['추세','ΔV '+num(t.voltage_change_v,2)+' V, '+num(t.temp_c_per_min,1)+' °C/분'+(e.delta_current!=null?', 외부 ΔI '+num(e.delta_current,1)+' A':'')]];
+  $('pitValues').replaceChildren(...rows.flatMap(([k,v])=>[el('dt',k),el('dd',v,/실패|필요/.test(v)?'no':'')]));
+ }
+
+ // 하단 상태 점: 문장 대신 색. 자세한 값은 마우스를 올리거나 정비 모드
+ if(game){$('sensorStatus').replaceChildren(chip('게임',ageState(s.input.age_s,1.5),'UDP '+num(s.input.age_s,1)+'s'));}
+ else $('sensorStatus').replaceChildren(chip('GPS',ageState(s.gps_age,1.5),num(s.gps_age,1)+'s 전'),chip('BMS',ageState(s.bms_age,1.5),num(s.bms_age,1)+'s 전'));
+ const pitState=h.pit_age==null?'warn':h.pit_age<5?'ok':'warn';
+ $('recordStatus').replaceChildren(chip('기록',h.storage_ok?'ok':'bad',h.storage_ok?'로컬 기록 중':'기록 실패'),
+  chip('피트',pitState,'미전송 '+(h.backlog??'--')+(h.pit_age==null?', 피트 연결 대기':', 피트 '+num(h.pit_age,1)+'s 전')));
+
+ activeCommand=(s.commands||[]).find(x=>x.status!=='seen')||null;$('order').style.display=activeCommand?'flex':'none';
+ $('orderText').textContent=activeCommand?'TEAM '+activeCommand.message:'';
+ document.documentElement.style.filter='brightness('+(s.driver_settings?.brightness||1)+')';
+ document.documentElement.dataset.contrast=s.driver_settings?.contrast||'normal';
+}
+function connect(){const stream=new EventSource('/stream');
+ stream.onmessage=e=>{try{data=JSON.parse(e.data);lastMessage=performance.now();render();}catch(_){}};
+ stream.onerror=()=>{lastMessage=-Infinity;render();stream.close();setTimeout(connect,1000);};}
+setInterval(render,250);connect();setMode(mode);
+async function post(path,body){$('error').textContent='';
+ const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Auth-Token':$('token').value},
+ body:JSON.stringify({...body,confirm_stationary:$('stationary').checked})});
+ const value=await response.json();if(!response.ok)throw Error(value.error||response.status);
+ if(value.state){data=value.state;lastMessage=performance.now();render();}return value;}
+function bind(id,action){$(id).addEventListener('click',async()=>{try{await action();$('error').textContent='저장했습니다';}catch(e){$('error').textContent=e.message;}});}
+$('settings').addEventListener('click',()=>{if(data?.speed>=2){$('alert').textContent='정차 후 설정을 여세요';return;}
+ const game=data?.input?.kind==='game';$('gameHelp').hidden=!game;
+ for(const id of ['resume','newRace','batteryEpoch','phaseInput','lapInput','setPhase','setLaps','profileInput','currentSign','saveProfile','anchorBudget'])$(id).disabled=game;
+ $('profileInput').value=JSON.stringify(data?.profile||{},null,2);$('driverId').value=data?.driver_id||'driver1';
+ profileBaseline=structuredClone(data?.profile||{});$('currentSign').value=String(profileBaseline.current_sign??-1);
+ $('modeInput').value=mode;$('brightness').value=data?.driver_settings?.brightness||1;$('contrast').value=data?.driver_settings?.contrast||'normal';
+ $('theme').value='clean';$('phaseInput').value=data?.phase||'READY';$('lapInput').value=data?.lap_count||0;$('error').textContent='';$('setup').showModal();});
+$('close').addEventListener('click',()=>$('setup').close());
+bind('resume',()=>post('/api/control',{action:'resume',same_battery:true}));
+bind('newRace',()=>post('/api/control',{action:'new_race',battery_epoch:$('batteryEpoch').value||null}));
+bind('setPhase',()=>post('/api/control',{action:'phase',phase:$('phaseInput').value}));
+bind('setLaps',()=>post('/api/control',{action:'lap_correction',count:Number($('lapInput').value)}));
+bind('setDriver',()=>post('/api/control',{action:'driver',driver_id:$('driverId').value,settings:{mode:$('modeInput').value,brightness:Number($('brightness').value),contrast:$('contrast').value}}));
+bind('saveProfile',async()=>{const proposed=JSON.parse($('profileInput').value);proposed.current_sign=Number($('currentSign').value);
+ const changes=Object.fromEntries(Object.entries(proposed).filter(([key,value])=>!['version','budget_reference_wh','budget_reference_gap'].includes(key)&&JSON.stringify(value)!==JSON.stringify(profileBaseline[key])));
+ await post('/api/control',{action:'profile',profile:changes});profileBaseline=structuredClone(data.profile);$('profileInput').value=JSON.stringify(profileBaseline,null,2);});
+bind('anchorBudget',async()=>{const proposed=JSON.parse($('profileInput').value);if(proposed.usable_remaining_wh==null)throw Error('사용 가능 용량(usable_remaining_wh)을 먼저 입력하세요');
+ await post('/api/control',{action:'profile',profile:{usable_remaining_wh:proposed.usable_remaining_wh}});profileBaseline=structuredClone(data.profile);$('profileInput').value=JSON.stringify(profileBaseline,null,2);});
+bind('seen',()=>activeCommand?post('/api/command/seen',{id:activeCommand.id}):Promise.resolve());
+bind('report',async()=>{const response=await fetch('/api/report');const value=await response.json();const a=document.createElement('a');
+ a.href=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));a.download='unimotors-race-report.json';a.click();URL.revokeObjectURL(a.href);});
+</script></body></html>

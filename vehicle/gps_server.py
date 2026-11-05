@@ -907,8 +907,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _html(self, legacy=False):
         theme = parse_qs(urlsplit(self.path).query).get("theme", [""])[0]
-        claude = legacy or theme == "claude"
-        page = Path(__file__).with_name("claude_dashboard.html" if claude else "driver_dashboard.html")
+        if legacy or theme == "claude":
+            name = "claude_dashboard.html"
+        elif theme == "clean" and Path(__file__).with_name("clean_dashboard.html").exists():
+            name = "clean_dashboard.html"   # 정돈형 (없는 설치에선 v7 로 대체)
+        else:
+            name = "driver_dashboard.html"
+        page = Path(__file__).with_name(name)
         b = page.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

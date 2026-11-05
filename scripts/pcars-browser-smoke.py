@@ -120,7 +120,7 @@ def main():
                 page = browser.new_page(viewport={"width": 800, "height": 480})
                 page.on("pageerror", lambda e: errors.append(str(e)))
                 url = f"http://127.0.0.1:{http_port}"
-                for theme in ("v7", "claude"):
+                for theme in ("clean", "v7", "claude"):
                     page.goto(url + "/?theme=" + theme)
                     page.wait_for_function("document.querySelector('#speed').textContent==='72'")
                     assert page.locator("#demoBadge").inner_text() == "PCARS 1 · GAME"
@@ -128,7 +128,8 @@ def main():
                     for width, height in ((800, 480), (892, 412), (1366, 1024)):
                         page.set_viewport_size(dict(width=width, height=height))
                         assert page.evaluate("document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight"), (theme, width, height)
-                        for selector in ("#speed", "#theme", "#batt" if theme == "claude" else "#metrics"):
+                        # 정돈형은 테마 선택이 설정 창 안에 있다
+                        for selector in ("#speed", "#batt" if theme == "claude" else "#metrics") + (() if theme == "clean" else ("#theme",)):
                             box = page.locator(selector).bounding_box()
                             assert box and box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= width + .5 and box["y"] + box["height"] <= height + .5, (theme, selector, box)
                         page.screenshot(path=str(qa / f"pcars-{theme}-{width}x{height}.png"))
@@ -241,7 +242,7 @@ def main():
         assert all(r["soc"] == r["voltage"] == r["used_wh"] == r["energy_increment_wh"] == "" for r in rows)
         assert all(r["vehicle"] == "pcars1" for r in rows)
         assert any(json.loads(r["meta"])["input"]["frame"].get("world_x") is not None for r in rows)
-        print("PASS: synthetic PCARS1 UDP -> v7 HTTP/SSE/CSV/pit ACK; 2 themes; local/pit maps; exact track auto-map; raster/JSON import; export; 3 viewports; pause/dropout/network watchdog")
+        print("PASS: synthetic PCARS1 UDP -> v7 HTTP/SSE/CSV/pit ACK; 3 themes; local/pit maps; exact track auto-map; raster/JSON import; export; 3 viewports; pause/dropout/network watchdog")
 
 
 if __name__ == "__main__":

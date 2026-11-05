@@ -27,6 +27,9 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: python scripts/browser-smoke.py
+      - run: python scripts/browser-smoke.py
+        env:
+          UNIMOTORS_SMOKE_THEME: clean
       - run: python scripts/demo-browser-smoke.py
       - run: python scripts/pcars-browser-smoke.py
       - uses: actions/upload-artifact@v4
