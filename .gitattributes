@@ -1,0 +1,3 @@
+# Preserve archived research originals byte-for-byte, including line endings.
+docs/research/originals/** -text
+docs/research/originals/**/*.pdf -diff
